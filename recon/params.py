@@ -25,8 +25,8 @@ load_dotenv(Path(__file__).parent / ".env")
 # Note: When following HTTP redirects, only URLs within TARGET_DOMAIN scope are kept.
 #       Redirects to external domains are filtered out.
 #
-TARGET_DOMAIN = "beta80group.it"
-SUBDOMAIN_LIST = ["pmag."]  # Empty [] = discover all, "." = root domain, or prefixes like ["www.", "api.", "."]
+TARGET_DOMAIN = "devergolabs.com"
+SUBDOMAIN_LIST = ["gpigs."]  # Empty [] = discover all, "." = root domain, or prefixes like ["www.", "api.", "."]
 USER_ID = "samgiam"
 PROJECT_ID = "project_2"
 

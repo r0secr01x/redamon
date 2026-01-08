@@ -120,8 +120,3 @@ volumes:
     driver: local
     name: redamon-recon-output
 
-# Network for internal communication (if not using host mode)
-networks:
-  redamon-network:
-    driver: bridge
-    name: redamon-network

