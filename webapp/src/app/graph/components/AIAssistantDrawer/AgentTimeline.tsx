@@ -68,45 +68,37 @@ export function AgentTimeline({ items, isStreaming, onItemExpand }: AgentTimelin
   }
 
   return (
-    <div className={styles.timeline}>
-      <div className={styles.timelineHeader}>
-        <h3 className={styles.timelineTitle}>Execution Timeline</h3>
-        {isStreaming && (
-          <span className={styles.streamingBadge}>
-            <span className={styles.streamingDot}></span>
-            Live
-          </span>
-        )}
-      </div>
+    <div className={styles.timelineItems}>
+      {items.map((item, index) => {
+        const isExpanded = expandedItems.has(item.id)
+        const isLast = index === items.length - 1
+        const isLastAndStreaming = isLast && isStreaming
 
-      <div className={styles.timelineItems}>
-        {items.map((item, index) => {
-          const isExpanded = expandedItems.has(item.id)
-          const isLast = index === items.length - 1
+        return (
+          <div
+            key={item.id}
+            className={`${styles.timelineItemWrapper} ${isLastAndStreaming ? styles.streaming : ''}`}
+          >
+            {/* Timeline connector line */}
+            {!isLast && <div className={styles.timelineConnector} />}
 
-          return (
-            <div key={item.id} className={styles.timelineItemWrapper}>
-              {/* Timeline connector line */}
-              {!isLast && <div className={styles.timelineConnector} />}
-
-              {/* Render appropriate card based on type */}
-              {item.type === 'thinking' ? (
-                <ThinkingCard
-                  item={item}
-                  isExpanded={isExpanded}
-                  onToggleExpand={() => toggleExpand(item.id)}
-                />
-              ) : (
-                <ToolExecutionCard
-                  item={item}
-                  isExpanded={isExpanded}
-                  onToggleExpand={() => toggleExpand(item.id)}
-                />
-              )}
-            </div>
-          )
-        })}
-      </div>
+            {/* Render appropriate card based on type */}
+            {item.type === 'thinking' ? (
+              <ThinkingCard
+                item={item}
+                isExpanded={isExpanded}
+                onToggleExpand={() => toggleExpand(item.id)}
+              />
+            ) : (
+              <ToolExecutionCard
+                item={item}
+                isExpanded={isExpanded}
+                onToggleExpand={() => toggleExpand(item.id)}
+              />
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

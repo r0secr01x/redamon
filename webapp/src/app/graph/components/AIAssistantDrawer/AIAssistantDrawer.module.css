@@ -274,12 +274,33 @@
   line-height: var(--leading-relaxed);
 }
 
+/* Markdown content styling - minimal overrides for react-markdown */
 .messageText p {
   margin: 0;
 }
 
 .messageText p + p {
   margin-top: var(--space-2);
+}
+
+/* Style inline code (not in code blocks) */
+.messageText code {
+  padding: 2px 6px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: var(--radius-sm);
+  font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+  font-size: 0.9em;
+}
+
+.messageUser .messageText code {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Syntax Highlighter container styling */
+.messageText :global(div[class*="language-"]) {
+  border-radius: var(--radius-md);
+  margin: var(--space-2) 0;
+  font-size: var(--text-xs);
 }
 
 .messageUser .messageText {

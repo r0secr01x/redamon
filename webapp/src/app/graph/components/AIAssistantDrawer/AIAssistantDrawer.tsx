@@ -10,6 +10,10 @@
 
 import { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react'
 import { Send, Bot, User, Loader2, AlertCircle, Sparkles, RotateCcw, Shield, Target, Zap, HelpCircle, WifiOff, Wifi } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import styles from './AIAssistantDrawer.module.css'
 import { useAgentWebSocket } from '@/hooks/useAgentWebSocket'
 import {
@@ -143,6 +147,7 @@ export function AIAssistantDrawer({
           updated_todo_list: todoList,
         }
         setChatItems(prev => [...prev, thinkingItem])
+        setIsLoading(true)
         break
 
       case MessageType.TOOL_START:
@@ -429,11 +434,30 @@ export function AIAssistantDrawer({
     }
   }
 
-  // Separate messages from timeline items
-  const messages = chatItems.filter((item): item is Message => 'role' in item)
-  const timelineItems = chatItems.filter((item): item is ThinkingItem | ToolExecutionItem =>
-    'type' in item && (item.type === 'thinking' || item.type === 'tool_execution')
-  )
+  // Group timeline items by their sequence (between messages)
+  const groupedChatItems: Array<{ type: 'message' | 'timeline', content: Message | Array<ThinkingItem | ToolExecutionItem> }> = []
+
+  let currentTimelineGroup: Array<ThinkingItem | ToolExecutionItem> = []
+
+  chatItems.forEach((item) => {
+    if ('role' in item) {
+      // It's a message - push any accumulated timeline items first
+      if (currentTimelineGroup.length > 0) {
+        groupedChatItems.push({ type: 'timeline', content: currentTimelineGroup })
+        currentTimelineGroup = []
+      }
+      // Then push the message
+      groupedChatItems.push({ type: 'message', content: item })
+    } else if ('type' in item && (item.type === 'thinking' || item.type === 'tool_execution')) {
+      // It's a timeline item - add to current group
+      currentTimelineGroup.push(item)
+    }
+  })
+
+  // Push any remaining timeline items
+  if (currentTimelineGroup.length > 0) {
+    groupedChatItems.push({ type: 'timeline', content: currentTimelineGroup })
+  }
 
   const renderMessage = (item: Message) => {
     return (
@@ -447,22 +471,33 @@ export function AIAssistantDrawer({
           {item.role === 'user' ? <User size={14} /> : <Bot size={14} />}
         </div>
         <div className={styles.messageContent}>
-          {item.role === 'assistant' && item.phase && (
-            <div
-              className={styles.messagePhaseBadge}
-              style={{
-                backgroundColor: PHASE_CONFIG[item.phase].bgColor,
-                color: PHASE_CONFIG[item.phase].color,
+          <div className={styles.messageText}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                code({ className, children, ...props }: any) {
+                  const match = /language-(\w+)/.exec(className || '')
+                  const language = match ? match[1] : ''
+                  const isInline = !className
+
+                  return !isInline && language ? (
+                    <SyntaxHighlighter
+                      style={vscDarkPlus as any}
+                      language={language}
+                      PreTag="div"
+                    >
+                      {String(children).replace(/\n$/, '')}
+                    </SyntaxHighlighter>
+                  ) : (
+                    <code className={className} {...props}>
+                      {children}
+                    </code>
+                  )
+                }
               }}
             >
-              {PHASE_CONFIG[item.phase].label}
-            </div>
-          )}
-
-          <div className={styles.messageText}>
-            {item.content.split('\n').map((line, i) => (
-              <p key={i}>{line || '\u00A0'}</p>
-            ))}
+              {item.content}
+            </ReactMarkdown>
           </div>
 
           {item.error && (
@@ -577,16 +612,22 @@ export function AIAssistantDrawer({
           </div>
         )}
 
-        {/* Timeline Section */}
-        {timelineItems.length > 0 && (
-          <AgentTimeline
-            items={timelineItems}
-            isStreaming={isLoading}
-          />
-        )}
-
-        {/* Messages Section */}
-        {messages.map(renderMessage)}
+        {/* Render messages and timeline items in chronological order */}
+        {groupedChatItems.map((groupItem, index) => {
+          if (groupItem.type === 'message') {
+            return renderMessage(groupItem.content as Message)
+          } else {
+            // Render timeline group
+            const items = groupItem.content as Array<ThinkingItem | ToolExecutionItem>
+            return (
+              <AgentTimeline
+                key={`timeline-${index}`}
+                items={items}
+                isStreaming={isLoading && index === groupedChatItems.length - 1}
+              />
+            )
+          }
+        })}
 
         {isLoading && (
           <div className={`${styles.message} ${styles.messageAssistant}`}>
