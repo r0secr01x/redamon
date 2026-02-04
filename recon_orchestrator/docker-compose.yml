@@ -1,0 +1,29 @@
+services:
+  recon-orchestrator:
+    build: .
+    container_name: redamon-recon-orchestrator
+    ports:
+      - "8010:8010"
+    volumes:
+      # Docker socket for container management
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Recon module path (for building image and accessing output)
+      - ${HOST_RECON_PATH:-../recon}:/app/recon:ro
+      # Recon output directory (read-write for download)
+      - ${HOST_RECON_PATH:-../recon}/output:/app/recon/output:rw
+    environment:
+      # RECON_PATH: Host path for Docker SDK volume mounts when spawning recon containers
+      - RECON_PATH=${HOST_RECON_PATH:-/home/samuele/Progetti didattici/RedAmon/recon}
+      - RECON_IMAGE=redamon-recon:latest
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  default:
+    name: redamon-network
+    external: true

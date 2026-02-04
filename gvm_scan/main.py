@@ -26,6 +26,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from params import (
     TARGET_DOMAIN,
+    PROJECT_ID,
     GVM_SCAN_TARGETS,
     GVM_CLEANUP_AFTER_SCAN,
     USE_RECON_FOR_TARGET,
@@ -106,17 +107,19 @@ def check_recon_has_live_targets(recon_data: dict) -> tuple:
 
 def run_vulnerability_scan(
     domain: str = TARGET_DOMAIN,
+    project_id: str = PROJECT_ID,
     scan_targets: str = GVM_SCAN_TARGETS,
     cleanup: bool = GVM_CLEANUP_AFTER_SCAN,
 ) -> dict:
     """
     Run vulnerability scan against targets from recon data.
-    
+
     Args:
-        domain: Target domain (reads from recon_<domain>.json)
+        domain: Target domain for display purposes
+        project_id: Project ID (reads from recon_<project_id>.json)
         scan_targets: "both", "ips_only", or "hostnames_only"
         cleanup: Delete targets/tasks after scan
-        
+
     Returns:
         Complete vulnerability scan results
     """
@@ -142,10 +145,10 @@ def run_vulnerability_scan(
         # Load recon data
         print("[*] Loading recon data...")
         try:
-            recon_data = load_recon_file(domain)
+            recon_data = load_recon_file(project_id)
             # Get root_domain from recon metadata (consistent with recon/main.py)
             root_domain = recon_data.get("metadata", {}).get("root_domain", domain)
-            print(f"    [+] Loaded: recon_{domain}.json")
+            print(f"    [+] Loaded: recon_{project_id}.json")
             print(f"    [+] Root domain: {root_domain}")
         except FileNotFoundError as e:
             print(f"[!] ERROR: {e}")
@@ -200,7 +203,7 @@ def run_vulnerability_scan(
             "scan_strategy": scan_targets,
             "use_recon_for_target": USE_RECON_FOR_TARGET,
             "target_source": "recon_data" if USE_RECON_FOR_TARGET else "manual_lists",
-            "recon_file": f"recon_{root_domain}.json" if USE_RECON_FOR_TARGET else None,
+            "recon_file": f"recon_{project_id}.json" if USE_RECON_FOR_TARGET else None,
             "targets": {
                 "ips": list(ips),
                 "hostnames": list(hostnames)
@@ -230,7 +233,7 @@ def run_vulnerability_scan(
         return {"error": "Failed to connect to GVM"}
     
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    output_file = OUTPUT_DIR / f"gvm_{root_domain}.json"
+    output_file = OUTPUT_DIR / f"gvm_{project_id}.json"
     
     def save_incremental():
         """Save current results incrementally."""

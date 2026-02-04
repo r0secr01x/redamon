@@ -26,78 +26,7 @@ import sys
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from recon.params import (
-    NUCLEI_SEVERITY,
-    NUCLEI_TEMPLATES,
-    NUCLEI_EXCLUDE_TEMPLATES,
-    NUCLEI_RATE_LIMIT,
-    NUCLEI_BULK_SIZE,
-    NUCLEI_CONCURRENCY,
-    NUCLEI_TIMEOUT,
-    NUCLEI_RETRIES,
-    NUCLEI_TAGS,
-    NUCLEI_EXCLUDE_TAGS,
-    NUCLEI_DAST_MODE,
-    NUCLEI_NEW_TEMPLATES_ONLY,
-    NUCLEI_CUSTOM_TEMPLATES,
-    NUCLEI_HEADLESS,
-    NUCLEI_SYSTEM_RESOLVERS,
-    NUCLEI_FOLLOW_REDIRECTS,
-    NUCLEI_MAX_REDIRECTS,
-    NUCLEI_SCAN_ALL_IPS,
-    NUCLEI_INTERACTSH,
-    NUCLEI_DOCKER_IMAGE,
-    USE_TOR_FOR_RECON,
-    # Katana crawler settings (for DAST mode)
-    KATANA_DEPTH,
-    # Template auto-update
-    NUCLEI_AUTO_UPDATE_TEMPLATES,
-    # CVE Lookup settings
-    CVE_LOOKUP_ENABLED,
-    CVE_LOOKUP_SOURCE,
-    CVE_LOOKUP_MAX_CVES,
-    CVE_LOOKUP_MIN_CVSS,
-    VULNERS_API_KEY,
-    # Security check settings (only non-redundant checks - others covered by Nuclei)
-    SECURITY_CHECK_DIRECT_IP_HTTP,
-    SECURITY_CHECK_DIRECT_IP_HTTPS,
-    SECURITY_CHECK_IP_API_EXPOSED,
-    SECURITY_CHECK_WAF_BYPASS,
-    SECURITY_CHECK_ENABLED,  # Global switch to skip all security checks
-    SECURITY_CHECK_TLS_EXPIRING_SOON,
-    SECURITY_CHECK_TLS_EXPIRY_DAYS,
-    # Security headers checks (only headers not covered by Nuclei)
-    SECURITY_CHECK_MISSING_REFERRER_POLICY,
-    SECURITY_CHECK_MISSING_PERMISSIONS_POLICY,
-    SECURITY_CHECK_MISSING_COOP,
-    SECURITY_CHECK_MISSING_CORP,
-    SECURITY_CHECK_MISSING_COEP,
-    SECURITY_CHECK_CACHE_CONTROL_MISSING,
-    # Authentication security checks
-    SECURITY_CHECK_LOGIN_NO_HTTPS,
-    SECURITY_CHECK_SESSION_NO_SECURE,
-    SECURITY_CHECK_SESSION_NO_HTTPONLY,
-    SECURITY_CHECK_BASIC_AUTH_NO_TLS,
-    # DNS security checks
-    SECURITY_CHECK_SPF_MISSING,
-    SECURITY_CHECK_DMARC_MISSING,
-    SECURITY_CHECK_DNSSEC_MISSING,
-    SECURITY_CHECK_ZONE_TRANSFER,
-    # Port/Service security checks
-    SECURITY_CHECK_ADMIN_PORT_EXPOSED,
-    SECURITY_CHECK_DATABASE_EXPOSED,
-    SECURITY_CHECK_REDIS_NO_AUTH,
-    SECURITY_CHECK_KUBERNETES_API_EXPOSED,
-    SECURITY_CHECK_SMTP_OPEN_RELAY,
-    # Application security checks
-    SECURITY_CHECK_CSP_UNSAFE_INLINE,
-    SECURITY_CHECK_INSECURE_FORM_ACTION,
-    # Rate limiting checks
-    SECURITY_CHECK_NO_RATE_LIMITING,
-    # Performance settings
-    SECURITY_CHECK_TIMEOUT,
-    SECURITY_CHECK_MAX_WORKERS,
-)
+# Settings are passed from main.py to avoid multiple database queries
 
 # Import helpers from organized modules
 from recon.helpers import (
@@ -138,21 +67,87 @@ SEVERITY_COLORS = {
 }
 
 
-def run_vuln_scan(recon_data: dict, output_file: Path = None) -> dict:
+def run_vuln_scan(recon_data: dict, output_file: Path = None, settings: dict = None) -> dict:
     """
     Run nuclei scan on all URLs derived from recon data.
-    
+
     Args:
         recon_data: Domain reconnaissance data dictionary
         output_file: Optional path to save incremental results
-        
+        settings: Settings dictionary from main.py
+
     Returns:
         Updated recon_data with nuclei results added
     """
     print("\n" + "=" * 70)
     print("         RedAmon - Nuclei Vulnerability Scanner")
     print("=" * 70)
-    
+
+    # Use passed settings or empty dict as fallback
+    if settings is None:
+        settings = {}
+
+    # Extract settings from passed dict
+    NUCLEI_SEVERITY = settings.get('NUCLEI_SEVERITY', ['critical', 'high', 'medium', 'low'])
+    NUCLEI_TEMPLATES = settings.get('NUCLEI_TEMPLATES', [])
+    NUCLEI_EXCLUDE_TEMPLATES = settings.get('NUCLEI_EXCLUDE_TEMPLATES', [])
+    NUCLEI_RATE_LIMIT = settings.get('NUCLEI_RATE_LIMIT', 100)
+    NUCLEI_BULK_SIZE = settings.get('NUCLEI_BULK_SIZE', 25)
+    NUCLEI_CONCURRENCY = settings.get('NUCLEI_CONCURRENCY', 25)
+    NUCLEI_TIMEOUT = settings.get('NUCLEI_TIMEOUT', 10)
+    NUCLEI_RETRIES = settings.get('NUCLEI_RETRIES', 1)
+    NUCLEI_TAGS = settings.get('NUCLEI_TAGS', [])
+    NUCLEI_EXCLUDE_TAGS = settings.get('NUCLEI_EXCLUDE_TAGS', [])
+    NUCLEI_DAST_MODE = settings.get('NUCLEI_DAST_MODE', True)
+    NUCLEI_NEW_TEMPLATES_ONLY = settings.get('NUCLEI_NEW_TEMPLATES_ONLY', False)
+    NUCLEI_CUSTOM_TEMPLATES = settings.get('NUCLEI_CUSTOM_TEMPLATES', [])
+    NUCLEI_HEADLESS = settings.get('NUCLEI_HEADLESS', False)
+    NUCLEI_SYSTEM_RESOLVERS = settings.get('NUCLEI_SYSTEM_RESOLVERS', True)
+    NUCLEI_FOLLOW_REDIRECTS = settings.get('NUCLEI_FOLLOW_REDIRECTS', True)
+    NUCLEI_MAX_REDIRECTS = settings.get('NUCLEI_MAX_REDIRECTS', 10)
+    NUCLEI_SCAN_ALL_IPS = settings.get('NUCLEI_SCAN_ALL_IPS', False)
+    NUCLEI_INTERACTSH = settings.get('NUCLEI_INTERACTSH', True)
+    NUCLEI_DOCKER_IMAGE = settings.get('NUCLEI_DOCKER_IMAGE', 'projectdiscovery/nuclei:latest')
+    USE_TOR_FOR_RECON = settings.get('USE_TOR_FOR_RECON', False)
+    KATANA_DEPTH = settings.get('KATANA_DEPTH', 3)
+    NUCLEI_AUTO_UPDATE_TEMPLATES = settings.get('NUCLEI_AUTO_UPDATE_TEMPLATES', True)
+    CVE_LOOKUP_ENABLED = settings.get('CVE_LOOKUP_ENABLED', True)
+    CVE_LOOKUP_SOURCE = settings.get('CVE_LOOKUP_SOURCE', 'nvd')
+    CVE_LOOKUP_MAX_CVES = settings.get('CVE_LOOKUP_MAX_CVES', 20)
+    CVE_LOOKUP_MIN_CVSS = settings.get('CVE_LOOKUP_MIN_CVSS', 0.0)
+    VULNERS_API_KEY = settings.get('VULNERS_API_KEY', '')
+    SECURITY_CHECK_ENABLED = settings.get('SECURITY_CHECK_ENABLED', True)
+    SECURITY_CHECK_DIRECT_IP_HTTP = settings.get('SECURITY_CHECK_DIRECT_IP_HTTP', True)
+    SECURITY_CHECK_DIRECT_IP_HTTPS = settings.get('SECURITY_CHECK_DIRECT_IP_HTTPS', True)
+    SECURITY_CHECK_IP_API_EXPOSED = settings.get('SECURITY_CHECK_IP_API_EXPOSED', True)
+    SECURITY_CHECK_WAF_BYPASS = settings.get('SECURITY_CHECK_WAF_BYPASS', True)
+    SECURITY_CHECK_TLS_EXPIRING_SOON = settings.get('SECURITY_CHECK_TLS_EXPIRING_SOON', True)
+    SECURITY_CHECK_TLS_EXPIRY_DAYS = settings.get('SECURITY_CHECK_TLS_EXPIRY_DAYS', 30)
+    SECURITY_CHECK_MISSING_REFERRER_POLICY = settings.get('SECURITY_CHECK_MISSING_REFERRER_POLICY', True)
+    SECURITY_CHECK_MISSING_PERMISSIONS_POLICY = settings.get('SECURITY_CHECK_MISSING_PERMISSIONS_POLICY', True)
+    SECURITY_CHECK_MISSING_COOP = settings.get('SECURITY_CHECK_MISSING_COOP', True)
+    SECURITY_CHECK_MISSING_CORP = settings.get('SECURITY_CHECK_MISSING_CORP', True)
+    SECURITY_CHECK_MISSING_COEP = settings.get('SECURITY_CHECK_MISSING_COEP', True)
+    SECURITY_CHECK_CACHE_CONTROL_MISSING = settings.get('SECURITY_CHECK_CACHE_CONTROL_MISSING', True)
+    SECURITY_CHECK_LOGIN_NO_HTTPS = settings.get('SECURITY_CHECK_LOGIN_NO_HTTPS', True)
+    SECURITY_CHECK_SESSION_NO_SECURE = settings.get('SECURITY_CHECK_SESSION_NO_SECURE', True)
+    SECURITY_CHECK_SESSION_NO_HTTPONLY = settings.get('SECURITY_CHECK_SESSION_NO_HTTPONLY', True)
+    SECURITY_CHECK_BASIC_AUTH_NO_TLS = settings.get('SECURITY_CHECK_BASIC_AUTH_NO_TLS', True)
+    SECURITY_CHECK_SPF_MISSING = settings.get('SECURITY_CHECK_SPF_MISSING', True)
+    SECURITY_CHECK_DMARC_MISSING = settings.get('SECURITY_CHECK_DMARC_MISSING', True)
+    SECURITY_CHECK_DNSSEC_MISSING = settings.get('SECURITY_CHECK_DNSSEC_MISSING', True)
+    SECURITY_CHECK_ZONE_TRANSFER = settings.get('SECURITY_CHECK_ZONE_TRANSFER', True)
+    SECURITY_CHECK_ADMIN_PORT_EXPOSED = settings.get('SECURITY_CHECK_ADMIN_PORT_EXPOSED', True)
+    SECURITY_CHECK_DATABASE_EXPOSED = settings.get('SECURITY_CHECK_DATABASE_EXPOSED', True)
+    SECURITY_CHECK_REDIS_NO_AUTH = settings.get('SECURITY_CHECK_REDIS_NO_AUTH', True)
+    SECURITY_CHECK_KUBERNETES_API_EXPOSED = settings.get('SECURITY_CHECK_KUBERNETES_API_EXPOSED', True)
+    SECURITY_CHECK_SMTP_OPEN_RELAY = settings.get('SECURITY_CHECK_SMTP_OPEN_RELAY', True)
+    SECURITY_CHECK_CSP_UNSAFE_INLINE = settings.get('SECURITY_CHECK_CSP_UNSAFE_INLINE', True)
+    SECURITY_CHECK_INSECURE_FORM_ACTION = settings.get('SECURITY_CHECK_INSECURE_FORM_ACTION', True)
+    SECURITY_CHECK_NO_RATE_LIMITING = settings.get('SECURITY_CHECK_NO_RATE_LIMITING', True)
+    SECURITY_CHECK_TIMEOUT = settings.get('SECURITY_CHECK_TIMEOUT', 10)
+    SECURITY_CHECK_MAX_WORKERS = settings.get('SECURITY_CHECK_MAX_WORKERS', 10)
+
     # Docker mode is required
     if not is_docker_installed():
         print("[!] Docker not found. Please install Docker to use Nuclei scanner.")
@@ -654,25 +649,29 @@ def run_vuln_scan(recon_data: dict, output_file: Path = None) -> dict:
 def enrich_recon_file(recon_file: Path) -> dict:
     """
     Load a recon JSON file, enrich it with nuclei data, and save it back.
-    
+
     Args:
         recon_file: Path to the recon JSON file
-        
+
     Returns:
         Enriched recon data
     """
+    # Load settings for standalone usage
+    from recon.project_settings import get_settings
+    settings = get_settings()
+
     # Load existing data
     with open(recon_file, 'r') as f:
         recon_data = json.load(f)
-    
+
     # Run nuclei scan
-    enriched_data = run_vuln_scan(recon_data, output_file=recon_file)
-    
+    enriched_data = run_vuln_scan(recon_data, output_file=recon_file, settings=settings)
+
     # Save enriched data
     with open(recon_file, 'w') as f:
         json.dump(enriched_data, f, indent=2)
-    
+
     print(f"[+] Enriched data saved to: {recon_file}")
-    
+
     return enriched_data
 

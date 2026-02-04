@@ -19,25 +19,22 @@ Enriches:
 """
 
 import json
-import sys
+import os
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional
 import requests
 
-# Add project root to path for imports
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
-from recon.params import (
-    MITRE_AUTO_UPDATE_DB,
-    MITRE_ENRICH_RECON,
-    MITRE_ENRICH_GVM,
-    MITRE_DATABASE_PATH,
-    MITRE_CACHE_TTL_HOURS,
-    MITRE_INCLUDE_CWE,
-    MITRE_INCLUDE_CAPEC,
-)
+# Default settings for MITRE enrichment (used when no settings provided)
+DEFAULT_MITRE_SETTINGS = {
+    'MITRE_AUTO_UPDATE_DB': True,
+    'MITRE_ENRICH_RECON': True,
+    'MITRE_ENRICH_GVM': True,
+    'MITRE_DATABASE_PATH': os.path.join(os.path.dirname(__file__), "data", "mitre_db"),
+    'MITRE_CACHE_TTL_HOURS': 24,
+    'MITRE_INCLUDE_CWE': True,
+    'MITRE_INCLUDE_CAPEC': True,
+}
 
 # =============================================================================
 # Constants
@@ -67,18 +64,21 @@ DATABASE_YEARS = list(range(1999, datetime.now().year + 1))
 # Database Management
 # =============================================================================
 
-def ensure_database_directory() -> Path:
+def ensure_database_directory(settings: Optional[Dict] = None) -> Path:
     """Ensure the MITRE database directory exists."""
-    db_path = Path(MITRE_DATABASE_PATH)
+    settings = settings or DEFAULT_MITRE_SETTINGS
+    db_path = Path(settings.get('MITRE_DATABASE_PATH', DEFAULT_MITRE_SETTINGS['MITRE_DATABASE_PATH']))
     db_path.mkdir(parents=True, exist_ok=True)
     (db_path / "resources").mkdir(parents=True, exist_ok=True)
     (db_path / "database").mkdir(parents=True, exist_ok=True)
     return db_path
 
 
-def is_database_fresh() -> bool:
+def is_database_fresh(settings: Optional[Dict] = None) -> bool:
     """Check if database was updated recently (within TTL)."""
-    db_path = Path(MITRE_DATABASE_PATH)
+    settings = settings or DEFAULT_MITRE_SETTINGS
+    db_path = Path(settings.get('MITRE_DATABASE_PATH', DEFAULT_MITRE_SETTINGS['MITRE_DATABASE_PATH']))
+    cache_ttl = settings.get('MITRE_CACHE_TTL_HOURS', DEFAULT_MITRE_SETTINGS['MITRE_CACHE_TTL_HOURS'])
     marker_file = db_path / ".last_update"
 
     if not marker_file.exists():
@@ -87,14 +87,15 @@ def is_database_fresh() -> bool:
     try:
         last_update = datetime.fromisoformat(marker_file.read_text().strip())
         age_hours = (datetime.now() - last_update).total_seconds() / 3600
-        return age_hours < MITRE_CACHE_TTL_HOURS
+        return age_hours < cache_ttl
     except Exception:
         return False
 
 
-def mark_database_updated():
+def mark_database_updated(settings: Optional[Dict] = None):
     """Mark database as freshly updated."""
-    db_path = Path(MITRE_DATABASE_PATH)
+    settings = settings or DEFAULT_MITRE_SETTINGS
+    db_path = Path(settings.get('MITRE_DATABASE_PATH', DEFAULT_MITRE_SETTINGS['MITRE_DATABASE_PATH']))
     marker_file = db_path / ".last_update"
     marker_file.write_text(datetime.now().isoformat())
 
@@ -129,7 +130,7 @@ def download_resource_files(db_path: Path) -> bool:
     return success
 
 
-def download_cwe_metadata(db_path: Path) -> bool:
+def download_cwe_metadata(db_path: Path, settings: Optional[Dict] = None) -> bool:
     """
     Download and parse official MITRE CWE data for comprehensive weakness information.
     Creates cwe_metadata.json with full details for ALLOWED CWEs.
@@ -138,13 +139,16 @@ def download_cwe_metadata(db_path: Path) -> bool:
     import io
     import xml.etree.ElementTree as ET
 
+    settings = settings or DEFAULT_MITRE_SETTINGS
+    cache_ttl = settings.get('MITRE_CACHE_TTL_HOURS', DEFAULT_MITRE_SETTINGS['MITRE_CACHE_TTL_HOURS'])
+
     dest_file = db_path / "resources" / "cwe_metadata.json"
 
     # Check if we already have it and it's recent
     if dest_file.exists():
         try:
             mtime = datetime.fromtimestamp(dest_file.stat().st_mtime)
-            if (datetime.now() - mtime).total_seconds() / 3600 < MITRE_CACHE_TTL_HOURS:
+            if (datetime.now() - mtime).total_seconds() / 3600 < cache_ttl:
                 print("    CWE metadata: cached (skipping download)")
                 return True
         except Exception:
@@ -315,12 +319,15 @@ def download_cwe_metadata(db_path: Path) -> bool:
         return False
 
 
-def download_capec_metadata(db_path: Path) -> bool:
+def download_capec_metadata(db_path: Path, settings: Optional[Dict] = None) -> bool:
     """
     Download and parse official MITRE CAPEC data for comprehensive attack pattern information.
     Creates capec_metadata.json with full details for each CAPEC.
     """
     import xml.etree.ElementTree as ET
+
+    settings = settings or DEFAULT_MITRE_SETTINGS
+    cache_ttl = settings.get('MITRE_CACHE_TTL_HOURS', DEFAULT_MITRE_SETTINGS['MITRE_CACHE_TTL_HOURS'])
 
     dest_file = db_path / "resources" / "capec_metadata.json"
 
@@ -328,7 +335,7 @@ def download_capec_metadata(db_path: Path) -> bool:
     if dest_file.exists():
         try:
             mtime = datetime.fromtimestamp(dest_file.stat().st_mtime)
-            if (datetime.now() - mtime).total_seconds() / 3600 < MITRE_CACHE_TTL_HOURS:
+            if (datetime.now() - mtime).total_seconds() / 3600 < cache_ttl:
                 print("    CAPEC metadata: cached (skipping download)")
                 return True
         except Exception:
@@ -474,21 +481,23 @@ def get_needed_years(cve_ids: List[str]) -> set:
     return years
 
 
-def update_database(cve_ids: List[str] = None, force: bool = False) -> bool:
+def update_database(cve_ids: List[str] = None, force: bool = False, settings: Optional[Dict] = None) -> bool:
     """
     Update the CVE2CAPEC database.
 
     Args:
         cve_ids: List of CVE IDs to determine which year files to download
         force: Force update even if cache is fresh
+        settings: Settings dict from project_settings.get_settings()
 
     Returns:
         True if database is ready for use
     """
-    db_path = ensure_database_directory()
+    settings = settings or DEFAULT_MITRE_SETTINGS
+    db_path = ensure_database_directory(settings)
 
     # Check if update is needed
-    if not force and is_database_fresh():
+    if not force and is_database_fresh(settings):
         print("[*] MITRE database is up to date (within TTL)")
         return True
 
@@ -504,10 +513,10 @@ def update_database(cve_ids: List[str] = None, force: bool = False) -> bool:
         return False
 
     # Download official MITRE CWE metadata (names, abstraction, mapping status)
-    download_cwe_metadata(db_path)
+    download_cwe_metadata(db_path, settings)
 
     # Download official MITRE CAPEC metadata (descriptions, severity, execution flow)
-    download_capec_metadata(db_path)
+    download_capec_metadata(db_path, settings)
 
     # Download CVE database files for needed years
     if cve_ids:
@@ -526,7 +535,7 @@ def update_database(cve_ids: List[str] = None, force: bool = False) -> bool:
             if not db_file.exists() or force:
                 download_cve_database_year(db_path, year)
 
-    mark_database_updated()
+    mark_database_updated(settings)
     print("[+] Database update complete")
     print("=" * 60)
 
@@ -540,8 +549,10 @@ def update_database(cve_ids: List[str] = None, force: bool = False) -> bool:
 class MITREDatabase:
     """Handles loading and querying the CVE2CAPEC database for CWE/CAPEC enrichment."""
 
-    def __init__(self, db_path: Path = None):
-        self.db_path = Path(db_path or MITRE_DATABASE_PATH)
+    def __init__(self, db_path: Path = None, settings: Optional[Dict] = None):
+        settings = settings or DEFAULT_MITRE_SETTINGS
+        default_path = settings.get('MITRE_DATABASE_PATH', DEFAULT_MITRE_SETTINGS['MITRE_DATABASE_PATH'])
+        self.db_path = Path(db_path or default_path)
         self.capec_db: Dict = {}             # capec_id -> {name, techniques, ...}
         self.cwe_db: Dict = {}               # cwe_id -> {parent CWEs, related CAPECs}
         self.cwe_metadata: Dict = {}         # cwe_id -> {name, abstraction, mapping}
@@ -898,7 +909,7 @@ def enrich_cve_list(cve_list: List[Dict], mitre_db: MITREDatabase,
 # Main Enrichment Functions
 # =============================================================================
 
-def enrich_recon_data(recon_data: Dict, mitre_db: MITREDatabase) -> Dict:
+def enrich_recon_data(recon_data: Dict, mitre_db: MITREDatabase, settings: Optional[Dict] = None) -> Dict:
     """
     Enrich reconnaissance data with MITRE ATT&CK information.
 
@@ -909,10 +920,15 @@ def enrich_recon_data(recon_data: Dict, mitre_db: MITREDatabase) -> Dict:
     Args:
         recon_data: Reconnaissance data dictionary
         mitre_db: Loaded MITRE database
+        settings: Settings dict from project_settings.get_settings()
 
     Returns:
         Enriched recon data
     """
+    settings = settings or DEFAULT_MITRE_SETTINGS
+    include_cwe = settings.get('MITRE_INCLUDE_CWE', DEFAULT_MITRE_SETTINGS['MITRE_INCLUDE_CWE'])
+    include_capec = settings.get('MITRE_INCLUDE_CAPEC', DEFAULT_MITRE_SETTINGS['MITRE_INCLUDE_CAPEC'])
+
     total_enriched = 0
     total_cves = 0
 
@@ -925,8 +941,8 @@ def enrich_recon_data(recon_data: Dict, mitre_db: MITREDatabase) -> Dict:
 
         enriched_cves, count = enrich_cve_list(
             all_cves, mitre_db,
-            include_cwe=MITRE_INCLUDE_CWE,
-            include_capec=MITRE_INCLUDE_CAPEC,
+            include_cwe=include_cwe,
+            include_capec=include_capec,
         )
         recon_data["vuln_scan"]["all_cves"] = enriched_cves
         total_enriched += count
@@ -945,8 +961,8 @@ def enrich_recon_data(recon_data: Dict, mitre_db: MITREDatabase) -> Dict:
                 tech_cve_count += len(cves)
                 enriched_cves, count = enrich_cve_list(
                     cves, mitre_db,
-                    include_cwe=MITRE_INCLUDE_CWE,
-                    include_capec=MITRE_INCLUDE_CAPEC,
+                    include_cwe=include_cwe,
+                    include_capec=include_capec,
                 )
                 recon_data["technology_cves"]["by_technology"][tech_name]["cves"] = enriched_cves
                 tech_enriched_count += count
@@ -965,15 +981,15 @@ def enrich_recon_data(recon_data: Dict, mitre_db: MITREDatabase) -> Dict:
         "timestamp": datetime.now().isoformat(),
         "total_cves_processed": total_cves,
         "total_cves_enriched": total_enriched,
-        "include_cwe": MITRE_INCLUDE_CWE,
-        "include_capec": MITRE_INCLUDE_CAPEC,
+        "include_cwe": include_cwe,
+        "include_capec": include_capec,
         "source": "CVE2CAPEC",
     }
 
     return recon_data
 
 
-def enrich_gvm_data(gvm_data: Dict, mitre_db: MITREDatabase) -> Dict:
+def enrich_gvm_data(gvm_data: Dict, mitre_db: MITREDatabase, settings: Optional[Dict] = None) -> Dict:
     """
     Enrich GVM scan data with MITRE ATT&CK information.
 
@@ -983,10 +999,15 @@ def enrich_gvm_data(gvm_data: Dict, mitre_db: MITREDatabase) -> Dict:
     Args:
         gvm_data: GVM scan data dictionary
         mitre_db: Loaded MITRE database
+        settings: Settings dict from project_settings.get_settings()
 
     Returns:
         Enriched GVM data
     """
+    settings = settings or DEFAULT_MITRE_SETTINGS
+    include_cwe = settings.get('MITRE_INCLUDE_CWE', DEFAULT_MITRE_SETTINGS['MITRE_INCLUDE_CWE'])
+    include_capec = settings.get('MITRE_INCLUDE_CAPEC', DEFAULT_MITRE_SETTINGS['MITRE_INCLUDE_CAPEC'])
+
     total_enriched = 0
     total_cves = 0
 
@@ -1007,8 +1028,8 @@ def enrich_gvm_data(gvm_data: Dict, mitre_db: MITREDatabase) -> Dict:
 
             enriched_cves, count = enrich_cve_list(
                 cve_dicts, mitre_db,
-                include_cwe=MITRE_INCLUDE_CWE,
-                include_capec=MITRE_INCLUDE_CAPEC,
+                include_cwe=include_cwe,
+                include_capec=include_capec,
             )
 
             # Update the scan data
@@ -1024,15 +1045,15 @@ def enrich_gvm_data(gvm_data: Dict, mitre_db: MITREDatabase) -> Dict:
         "timestamp": datetime.now().isoformat(),
         "total_cves_processed": total_cves,
         "total_cves_enriched": total_enriched,
-        "include_cwe": MITRE_INCLUDE_CWE,
-        "include_capec": MITRE_INCLUDE_CAPEC,
+        "include_cwe": include_cwe,
+        "include_capec": include_capec,
         "source": "CVE2CAPEC",
     }
 
     return gvm_data
 
 
-def run_mitre_enrichment(recon_data: Dict = None, output_file: Path = None) -> Dict:
+def run_mitre_enrichment(recon_data: Dict = None, output_file: Path = None, settings: Optional[Dict] = None) -> Dict:
     """
     Run MITRE CWE/CAPEC enrichment on recon data.
 
@@ -1041,23 +1062,31 @@ def run_mitre_enrichment(recon_data: Dict = None, output_file: Path = None) -> D
     Args:
         recon_data: Reconnaissance data dictionary
         output_file: Path to save results
+        settings: Settings dict from project_settings.get_settings()
 
     Returns:
         Enriched recon data
     """
+    settings = settings or DEFAULT_MITRE_SETTINGS
+    include_cwe = settings.get('MITRE_INCLUDE_CWE', DEFAULT_MITRE_SETTINGS['MITRE_INCLUDE_CWE'])
+    include_capec = settings.get('MITRE_INCLUDE_CAPEC', DEFAULT_MITRE_SETTINGS['MITRE_INCLUDE_CAPEC'])
+    enrich_recon = settings.get('MITRE_ENRICH_RECON', DEFAULT_MITRE_SETTINGS['MITRE_ENRICH_RECON'])
+    enrich_gvm = settings.get('MITRE_ENRICH_GVM', DEFAULT_MITRE_SETTINGS['MITRE_ENRICH_GVM'])
+    auto_update = settings.get('MITRE_AUTO_UPDATE_DB', DEFAULT_MITRE_SETTINGS['MITRE_AUTO_UPDATE_DB'])
+
     print("\n" + "=" * 60)
     print("         RedAmon - MITRE CWE/CAPEC Enrichment")
     print("=" * 60)
-    print(f"    Include CWE: {MITRE_INCLUDE_CWE}")
-    print(f"    Include CAPEC: {MITRE_INCLUDE_CAPEC}")
-    print(f"    Enrich Recon: {MITRE_ENRICH_RECON}")
-    print(f"    Enrich GVM: {MITRE_ENRICH_GVM}")
-    print(f"    Auto Update DB: {MITRE_AUTO_UPDATE_DB}")
+    print(f"    Include CWE: {include_cwe}")
+    print(f"    Include CAPEC: {include_capec}")
+    print(f"    Enrich Recon: {enrich_recon}")
+    print(f"    Enrich GVM: {enrich_gvm}")
+    print(f"    Auto Update DB: {auto_update}")
 
     # Collect all CVE IDs to download only needed years
     all_cve_ids = []
 
-    if recon_data and MITRE_ENRICH_RECON:
+    if recon_data and enrich_recon:
         # From vuln_scan
         vuln_cves = recon_data.get("vuln_scan", {}).get("all_cves", [])
         all_cve_ids.extend([c.get("id", "") for c in vuln_cves if isinstance(c, dict)])
@@ -1073,8 +1102,8 @@ def run_mitre_enrichment(recon_data: Dict = None, output_file: Path = None) -> D
     print("=" * 60)
 
     # Update database with needed years (if auto-update enabled)
-    if MITRE_AUTO_UPDATE_DB:
-        if not update_database(all_cve_ids):
+    if auto_update:
+        if not update_database(all_cve_ids, settings=settings):
             print("[!] Failed to update MITRE database")
             return recon_data
     else:
@@ -1082,15 +1111,15 @@ def run_mitre_enrichment(recon_data: Dict = None, output_file: Path = None) -> D
 
     # Load database
     print("\n[*] Loading MITRE database...")
-    mitre_db = MITREDatabase()
+    mitre_db = MITREDatabase(settings=settings)
     if not mitre_db.load_resources():
         print("[!] Failed to load MITRE database resources")
         return recon_data
 
     # Enrich recon data
-    if recon_data and MITRE_ENRICH_RECON:
+    if recon_data and enrich_recon:
         print("\n[*] Enriching reconnaissance data...")
-        recon_data = enrich_recon_data(recon_data, mitre_db)
+        recon_data = enrich_recon_data(recon_data, mitre_db, settings)
 
         # Save if output file provided
         if output_file:
@@ -1109,18 +1138,23 @@ def run_mitre_enrichment(recon_data: Dict = None, output_file: Path = None) -> D
     return recon_data
 
 
-def enrich_gvm_file(gvm_file: Path) -> Dict:
+def enrich_gvm_file(gvm_file: Path, settings: Optional[Dict] = None) -> Dict:
     """
     Enrich a GVM scan output file with MITRE ATT&CK data.
 
     Args:
         gvm_file: Path to GVM JSON file
+        settings: Settings dict from project_settings.get_settings()
 
     Returns:
         Enriched GVM data
     """
-    if not MITRE_ENRICH_GVM:
-        print("[*] GVM MITRE enrichment disabled in params")
+    settings = settings or DEFAULT_MITRE_SETTINGS
+    enrich_gvm = settings.get('MITRE_ENRICH_GVM', DEFAULT_MITRE_SETTINGS['MITRE_ENRICH_GVM'])
+    auto_update = settings.get('MITRE_AUTO_UPDATE_DB', DEFAULT_MITRE_SETTINGS['MITRE_AUTO_UPDATE_DB'])
+
+    if not enrich_gvm:
+        print("[*] GVM MITRE enrichment disabled in settings")
         return None
 
     if not gvm_file.exists():
@@ -1131,7 +1165,7 @@ def enrich_gvm_file(gvm_file: Path) -> Dict:
     print("         RedAmon - MITRE CWE/CAPEC Enrichment (GVM)")
     print("=" * 60)
     print(f"    File: {gvm_file}")
-    print(f"    Auto Update DB: {MITRE_AUTO_UPDATE_DB}")
+    print(f"    Auto Update DB: {auto_update}")
 
     # Load GVM data
     with open(gvm_file, 'r') as f:
@@ -1150,8 +1184,8 @@ def enrich_gvm_file(gvm_file: Path) -> Dict:
     print("=" * 60)
 
     # Update database (if auto-update enabled)
-    if MITRE_AUTO_UPDATE_DB:
-        if not update_database(all_cve_ids):
+    if auto_update:
+        if not update_database(all_cve_ids, settings=settings):
             print("[!] Failed to update MITRE database")
             return gvm_data
     else:
@@ -1159,14 +1193,14 @@ def enrich_gvm_file(gvm_file: Path) -> Dict:
 
     # Load database
     print("\n[*] Loading MITRE database...")
-    mitre_db = MITREDatabase()
+    mitre_db = MITREDatabase(settings=settings)
     if not mitre_db.load_resources():
         print("[!] Failed to load MITRE database resources")
         return gvm_data
 
     # Enrich GVM data
     print("\n[*] Enriching GVM scan data...")
-    gvm_data = enrich_gvm_data(gvm_data, mitre_db)
+    gvm_data = enrich_gvm_data(gvm_data, mitre_db, settings)
 
     # Save enriched data
     with open(gvm_file, 'w') as f:

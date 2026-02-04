@@ -15,6 +15,62 @@ An AI-powered agentic red team framework that automates offensive security opera
 
 ---
 
+## Quick Start
+
+### Prerequisites
+
+- Docker & Docker Compose
+- Node.js 20+ (for webapp)
+
+### One-Command Startup
+
+```bash
+# Start all services and webapp
+./start.sh
+
+# Stop all services
+./stop.sh
+```
+
+The `start.sh` script automatically:
+1. Creates the Docker network
+2. Starts PostgreSQL and Neo4j databases
+3. Builds and starts Recon Orchestrator
+4. Builds and starts MCP Servers (Kali sandbox)
+5. Builds and starts AI Agent
+6. Runs Prisma migrations
+7. Starts the webapp (`npm run dev`)
+
+### Services
+
+| Service | URL |
+|---------|-----|
+| Webapp | http://localhost:3000 |
+| Neo4j Browser | http://localhost:7474 |
+| Recon Orchestrator | http://localhost:8010 |
+| Agent API | http://localhost:8090 |
+| MCP Naabu | http://localhost:8000 |
+| MCP Curl | http://localhost:8001 |
+| MCP Nuclei | http://localhost:8002 |
+| MCP Metasploit | http://localhost:8003 |
+
+### Running Reconnaissance
+
+**Option A: From Webapp (Recommended)**
+1. Create a project with target domain and settings
+2. Navigate to Graph page
+3. Click "Start Recon" button
+4. Watch real-time logs in the drawer
+
+**Option B: From CLI**
+```bash
+cd recon
+docker-compose build
+docker-compose run --rm recon python /app/recon/main.py
+```
+
+---
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -30,7 +86,6 @@ An AI-powered agentic red team framework that automates offensive security opera
   - [Web Application](#5-web-application)
   - [GVM Scanner](#6-gvm-scanner)
   - [Test Environments](#7-test-environments)
-- [Quick Start](#quick-start)
 - [Documentation](#documentation)
 - [Legal](#legal)
 
@@ -43,10 +98,12 @@ RedAmon is a modular, containerized penetration testing framework that combines:
 | Component | Purpose |
 |-----------|---------|
 | **Automated Reconnaissance** | Subdomain discovery, port scanning, HTTP probing, technology fingerprinting, vulnerability scanning |
+| **Recon Orchestrator** | FastAPI service for managing recon containers with real-time log streaming via SSE |
 | **Graph Database** | Neo4j-powered attack surface visualization and relationship mapping |
+| **Project Database** | PostgreSQL with Prisma ORM for storing project configurations (169+ parameters) |
 | **AI Agent Orchestration** | LangGraph-based autonomous decision making with ReAct pattern |
 | **MCP Tool Integration** | Security tools exposed via Model Context Protocol for AI agents |
-| **Web Interface** | Next.js dashboard for visualization and AI chat interaction |
+| **Web Interface** | Next.js dashboard with graph visualization, recon control, and AI chat |
 
 ---
 
@@ -66,7 +123,8 @@ flowchart TB
     end
 
     subgraph Backend["⚙️ Backend Layer"]
-        Agent[AI Agent Orchestrator<br/>FastAPI + LangGraph<br/>:8080]
+        Agent[AI Agent Orchestrator<br/>FastAPI + LangGraph<br/>:8090]
+        ReconOrch[Recon Orchestrator<br/>FastAPI + Docker SDK<br/>:8010]
     end
 
     subgraph Tools["🔧 MCP Tools Layer"]
@@ -78,6 +136,7 @@ flowchart TB
 
     subgraph Data["💾 Data Layer"]
         Neo4j[(Neo4j Graph DB<br/>:7474/:7687)]
+        Postgres[(PostgreSQL<br/>Project Settings<br/>:5432)]
         Recon[Recon Pipeline<br/>Docker Container]
     end
 
@@ -89,7 +148,11 @@ flowchart TB
     Browser --> Webapp
     CLI --> Recon
     Webapp <-->|WebSocket| Agent
+    Webapp -->|REST + SSE| ReconOrch
     Webapp --> Neo4j
+    Webapp --> Postgres
+    ReconOrch -->|Docker SDK| Recon
+    Recon -->|Fetch Settings| Webapp
     Agent --> Neo4j
     Agent -->|MCP Protocol| Naabu
     Agent -->|MCP Protocol| Curl
@@ -149,6 +212,12 @@ flowchart TB
 flowchart TB
     subgraph Host["🖥️ Host Machine"]
         subgraph Containers["Docker Containers"]
+            subgraph ReconOrchContainer["recon-orchestrator"]
+                OrchAPI[FastAPI :8010]
+                DockerSDK[Docker SDK]
+                SSEStream[SSE Log Streaming]
+            end
+
             subgraph ReconContainer["recon-container"]
                 ReconPy[Python Scripts]
                 Naabu1[Naabu]
@@ -165,7 +234,7 @@ flowchart TB
             end
 
             subgraph AgenticContainer["agentic-container"]
-                FastAPI[FastAPI :8080]
+                FastAPI[FastAPI :8090]
                 LangGraph[LangGraph Engine]
                 Claude[Claude AI]
             end
@@ -175,8 +244,14 @@ flowchart TB
                 Browser[Browser :7474]
             end
 
+            subgraph PostgresContainer["postgres-container"]
+                PostgresDB[(PostgreSQL :5432)]
+                Prisma[Prisma ORM]
+            end
+
             subgraph WebappContainer["webapp-container"]
                 NextJS[Next.js :3000]
+                PrismaClient[Prisma Client]
             end
 
             subgraph GVMContainer["gvm-container"]
@@ -191,9 +266,12 @@ flowchart TB
         end
 
         Volumes["📁 Shared Volumes"]
+        ReconOrchContainer -->|Manages| ReconContainer
         ReconContainer --> Volumes
         Volumes --> Neo4jContainer
         Volumes --> GVMContainer
+        WebappContainer --> PostgresContainer
+        ReconContainer -->|Fetch Settings| WebappContainer
     end
 ```
 
@@ -556,68 +634,16 @@ Intentionally vulnerable systems for safe testing.
 
 ---
 
-## Quick Start
-
-### Prerequisites
-
-- Docker & Docker Compose
-- Python 3.11+
-- Node.js 18+ (for webapp)
-
-### 1. Start Neo4j Database
-
-```bash
-cd graph_db
-docker compose up -d
-```
-
-### 2. Run Reconnaissance
-
-```bash
-cd recon
-# Edit params.py with target domain
-docker-compose build
-docker-compose run --rm recon python /app/recon/main.py
-```
-
-### 3. Start MCP Servers
-
-```bash
-cd mcp
-docker-compose up -d
-```
-
-### 4. Start AI Agent
-
-```bash
-cd agentic
-docker-compose up -d
-```
-
-### 5. Start Webapp
-
-```bash
-cd webapp
-npm install
-npm run dev
-```
-
-### 6. Open Browser
-
-- **Webapp**: http://localhost:3000
-- **Neo4j Browser**: http://localhost:7474
-- **Agent API**: http://localhost:8080
-
----
-
 ## Documentation
 
 | Component | Documentation |
 |-----------|---------------|
 | Project Guidelines | [.claude/CLAUDE.md](.claude/CLAUDE.md) |
 | Reconnaissance | [recon/README.RECON.md](recon/README.RECON.md) |
+| Recon Orchestrator | [recon_orchestrator/README.md](recon_orchestrator/README.md) |
 | Graph Database | [graph_db/readmes/README.GRAPH_DB.md](graph_db/readmes/README.GRAPH_DB.md) |
 | Graph Schema | [graph_db/readmes/GRAPH.SCHEMA.md](graph_db/readmes/GRAPH.SCHEMA.md) |
+| PostgreSQL Database | [postgres_db/README.md](postgres_db/README.md) |
 | MCP Servers | [mcp/README.MCP.md](mcp/README.MCP.md) |
 | AI Agent | [agentic/README.AGENTIC.md](agentic/README.AGENTIC.md) |
 | Metasploit Guide | [agentic/README.METASPLOIT.GUIDE.md](agentic/README.METASPLOIT.GUIDE.md) |

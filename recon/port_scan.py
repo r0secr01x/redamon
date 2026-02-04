@@ -25,22 +25,7 @@ import sys
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from recon.params import (
-    NAABU_DOCKER_IMAGE,
-    NAABU_TOP_PORTS,
-    NAABU_CUSTOM_PORTS,
-    NAABU_RATE_LIMIT,
-    NAABU_THREADS,
-    NAABU_TIMEOUT,
-    NAABU_RETRIES,
-    NAABU_SCAN_TYPE,
-    NAABU_EXCLUDE_CDN,
-    NAABU_DISPLAY_CDN,
-    NAABU_SKIP_HOST_DISCOVERY,
-    NAABU_VERIFY_PORTS,
-    NAABU_PASSIVE_MODE,
-    USE_TOR_FOR_RECON,
-)
+# Settings are passed from main.py to avoid multiple database queries
 
 
 # =============================================================================
@@ -66,13 +51,13 @@ def is_docker_running() -> bool:
         return False
 
 
-def pull_naabu_docker_image() -> bool:
+def pull_naabu_docker_image(docker_image: str) -> bool:
     """Pull the Naabu Docker image if not present."""
-    print(f"    [*] Checking Naabu Docker image: {NAABU_DOCKER_IMAGE}")
+    print(f"    [*] Checking Naabu Docker image: {docker_image}")
 
     # Check if image exists
     result = subprocess.run(
-        ["docker", "images", "-q", NAABU_DOCKER_IMAGE],
+        ["docker", "images", "-q", docker_image],
         capture_output=True,
         text=True
     )
@@ -83,7 +68,7 @@ def pull_naabu_docker_image() -> bool:
 
     print(f"    [*] Pulling image (this may take a moment)...")
     result = subprocess.run(
-        ["docker", "pull", NAABU_DOCKER_IMAGE],
+        ["docker", "pull", docker_image],
         capture_output=True,
         text=True,
         timeout=300
@@ -193,18 +178,34 @@ def get_host_path(container_path: str) -> str:
     return container_path
 
 
-def build_naabu_command(targets_file: str, output_file: str, use_proxy: bool = False) -> List[str]:
+def build_naabu_command(targets_file: str, output_file: str, settings: dict, use_proxy: bool = False) -> List[str]:
     """
     Build the Docker command for running Naabu.
 
     Args:
         targets_file: Path to file containing targets (one per line)
         output_file: Path for JSON output
+        settings: Settings dictionary from main.py
         use_proxy: Whether to use Tor proxy
 
     Returns:
         List of command arguments
     """
+    # Extract settings from passed dict
+    NAABU_DOCKER_IMAGE = settings.get('NAABU_DOCKER_IMAGE', 'projectdiscovery/naabu:latest')
+    NAABU_TOP_PORTS = settings.get('NAABU_TOP_PORTS', '1000')
+    NAABU_CUSTOM_PORTS = settings.get('NAABU_CUSTOM_PORTS', '')
+    NAABU_RATE_LIMIT = settings.get('NAABU_RATE_LIMIT', 1000)
+    NAABU_THREADS = settings.get('NAABU_THREADS', 25)
+    NAABU_TIMEOUT = settings.get('NAABU_TIMEOUT', 10000)
+    NAABU_RETRIES = settings.get('NAABU_RETRIES', 1)
+    NAABU_SCAN_TYPE = settings.get('NAABU_SCAN_TYPE', 's')
+    NAABU_EXCLUDE_CDN = settings.get('NAABU_EXCLUDE_CDN', False)
+    NAABU_DISPLAY_CDN = settings.get('NAABU_DISPLAY_CDN', True)
+    NAABU_SKIP_HOST_DISCOVERY = settings.get('NAABU_SKIP_HOST_DISCOVERY', True)
+    NAABU_VERIFY_PORTS = settings.get('NAABU_VERIFY_PORTS', True)
+    NAABU_PASSIVE_MODE = settings.get('NAABU_PASSIVE_MODE', False)
+
     # Convert container paths to host paths for sibling container volume mounts
     targets_host_path = get_host_path(str(Path(targets_file).parent))
     output_host_path = get_host_path(str(Path(output_file).parent))
@@ -440,13 +441,14 @@ def fix_file_ownership(file_path: Path) -> None:
 # Main Scan Function
 # =============================================================================
 
-def run_port_scan(recon_data: dict, output_file: Path = None) -> dict:
+def run_port_scan(recon_data: dict, output_file: Path = None, settings: dict = None) -> dict:
     """
     Run Naabu port scan on targets from recon data.
 
     Args:
         recon_data: Dictionary containing DNS/subdomain data
         output_file: Path to save enriched results (optional)
+        settings: Settings dictionary from main.py
 
     Returns:
         Enriched recon_data with "port_scan" section added
@@ -454,6 +456,20 @@ def run_port_scan(recon_data: dict, output_file: Path = None) -> dict:
     print("\n" + "="*60)
     print("NAABU PORT SCANNER")
     print("="*60)
+
+    # Use passed settings or empty dict as fallback
+    if settings is None:
+        settings = {}
+
+    # Extract settings from passed dict
+    NAABU_DOCKER_IMAGE = settings.get('NAABU_DOCKER_IMAGE', 'projectdiscovery/naabu:latest')
+    NAABU_TOP_PORTS = settings.get('NAABU_TOP_PORTS', '1000')
+    NAABU_CUSTOM_PORTS = settings.get('NAABU_CUSTOM_PORTS', '')
+    NAABU_RATE_LIMIT = settings.get('NAABU_RATE_LIMIT', 1000)
+    NAABU_SCAN_TYPE = settings.get('NAABU_SCAN_TYPE', 's')
+    NAABU_EXCLUDE_CDN = settings.get('NAABU_EXCLUDE_CDN', False)
+    NAABU_PASSIVE_MODE = settings.get('NAABU_PASSIVE_MODE', False)
+    USE_TOR_FOR_RECON = settings.get('USE_TOR_FOR_RECON', False)
 
     # Check Docker
     if not is_docker_installed():
@@ -465,7 +481,7 @@ def run_port_scan(recon_data: dict, output_file: Path = None) -> dict:
         return recon_data
 
     # Pull image if needed
-    if not pull_naabu_docker_image():
+    if not pull_naabu_docker_image(NAABU_DOCKER_IMAGE):
         print("[!] Failed to get Naabu Docker image")
         return recon_data
 
@@ -509,7 +525,7 @@ def run_port_scan(recon_data: dict, output_file: Path = None) -> dict:
         naabu_output = scan_temp_dir / "naabu_output.json"
 
         # Build and run command
-        cmd = build_naabu_command(str(targets_file), str(naabu_output), use_proxy)
+        cmd = build_naabu_command(str(targets_file), str(naabu_output), settings, use_proxy)
 
         print(f"\n[*] Starting Naabu scan...")
         print(f"    [*] Scan type: {'SYN' if NAABU_SCAN_TYPE == 's' else 'CONNECT'}")
@@ -620,12 +636,16 @@ def enrich_recon_file(recon_file: Path) -> dict:
     Returns:
         Enriched recon data
     """
+    # Load settings for standalone usage
+    from recon.project_settings import get_settings
+    settings = get_settings()
+
     print(f"\n[*] Loading recon file: {recon_file}")
 
     with open(recon_file, 'r') as f:
         recon_data = json.load(f)
 
-    enriched = run_port_scan(recon_data, output_file=recon_file)
+    enriched = run_port_scan(recon_data, output_file=recon_file, settings=settings)
 
     return enriched
 

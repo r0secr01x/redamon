@@ -25,6 +25,29 @@ An automated OSINT reconnaissance and vulnerability scanning framework combining
 
 The recon module is fully containerized. All tools run inside Docker containers.
 
+### Option 1: Start from Webapp (Recommended)
+
+The easiest way to run recon is through the webapp UI, which provides:
+- Real-time log streaming
+- Phase progress tracking
+- Project-specific settings from PostgreSQL
+- Automatic Neo4j graph updates
+
+```bash
+# 1. Start all services
+cd postgres_db && docker-compose up -d
+cd ../graph_db && docker-compose up -d
+cd ../recon_orchestrator && docker-compose up -d
+cd ../webapp && npm run dev
+
+# 2. Open http://localhost:3000/graph
+# 3. Click "Start Recon" button
+```
+
+### Option 2: CLI with params.py Defaults
+
+For standalone CLI usage without the webapp:
+
 ```bash
 # 1. Configure target in recon/params.py
 TARGET_DOMAIN = "testphp.vulnweb.com"    # Root domain to scan
@@ -62,6 +85,76 @@ SCAN_MODULES="domain_discovery,port_scan,http_probe" docker-compose run --rm rec
 | `requirements.txt` changes | `docker-compose build --no-cache` |
 | `Dockerfile` changes | `docker-compose build --no-cache` |
 | `.env` file changes | No rebuild needed (mounted as volume) |
+
+---
+
+## 🔗 Recon Orchestrator Integration
+
+When started from the webapp, the recon module is managed by the **Recon Orchestrator** service, which provides:
+
+- **Container Lifecycle Management** - Start/stop/monitor recon containers
+- **Real-time Log Streaming** - SSE-based log streaming to the frontend
+- **Phase Detection** - Automatic detection of scan phases from log output
+- **Status Tracking** - Track running/completed/error states per project
+
+### Configuration Hierarchy
+
+Settings are resolved in the following order of precedence:
+
+1. **Webapp API (Primary)** - When `PROJECT_ID` and `WEBAPP_API_URL` environment variables are set:
+   ```bash
+   # Set by recon orchestrator when starting container
+   PROJECT_ID=cml6xov4q0002h58pln96n20d
+   WEBAPP_API_URL=http://localhost:3000
+   ```
+   The recon module fetches all 169+ configurable parameters from:
+   ```
+   GET /api/projects/{projectId}
+   ```
+
+2. **Environment Variables** - Override individual settings:
+   ```bash
+   TARGET_DOMAIN=example.com docker-compose run --rm recon python /app/recon/main.py
+   ```
+
+3. **params.py (Fallback)** - Default values for CLI usage without webapp
+
+### project_settings.py
+
+The `project_settings.py` module handles settings resolution:
+
+```python
+from recon.project_settings import get_settings
+
+# Returns dict with all settings from API or params.py fallback
+settings = get_settings()
+
+TARGET_DOMAIN = settings['TARGET_DOMAIN']
+SUBDOMAIN_LIST = settings['SUBDOMAIN_LIST']
+SCAN_MODULES = settings['SCAN_MODULES']
+# ... all 169+ parameters
+```
+
+### Orchestrator Communication Flow
+
+```mermaid
+sequenceDiagram
+    participant Webapp as Webapp UI
+    participant Orchestrator as Recon Orchestrator
+    participant Recon as Recon Container
+    participant API as Webapp API
+    participant Neo4j as Neo4j
+
+    Webapp->>Orchestrator: POST /recon/{projectId}/start
+    Orchestrator->>Recon: docker run with PROJECT_ID, WEBAPP_API_URL
+    Recon->>API: GET /api/projects/{projectId}
+    API-->>Recon: Project settings (169+ params)
+    Recon->>Recon: Execute scan pipeline
+    Recon->>Neo4j: Update graph with results
+    Orchestrator->>Webapp: SSE log stream
+    Recon-->>Orchestrator: Container exits
+    Orchestrator->>Webapp: Complete event
+```
 
 ---
 
@@ -890,7 +983,8 @@ docker-compose run --rm recon python /app/recon/main.py
 recon/
 ├── Dockerfile              # Container build
 ├── docker-compose.yml      # Orchestration
-├── params.py               # 🎛️ Configuration (edit this!)
+├── params.py               # 🎛️ Default configuration values
+├── project_settings.py     # 🔗 Settings fetcher (API or params.py)
 ├── main.py                 # 🚀 Entry point
 ├── domain_recon.py         # Subdomain discovery
 ├── whois_recon.py          # WHOIS lookup

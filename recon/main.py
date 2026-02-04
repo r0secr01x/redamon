@@ -27,23 +27,26 @@ from datetime import datetime
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# Import from local recon params (recon/params.py)
-from recon.params import (
-    TARGET_DOMAIN,
-    SUBDOMAIN_LIST,
-    USE_TOR_FOR_RECON,
-    USE_BRUTEFORCE_FOR_SUBDOMAINS,
-    SCAN_MODULES,
-    GITHUB_ACCESS_TOKEN,
-    GITHUB_TARGET_ORG,
-    UPDATE_GRAPH_DB,
-    USER_ID,
-    PROJECT_ID,
-    # Domain ownership verification
-    VERIFY_DOMAIN_OWNERSHIP,
-    OWNERSHIP_TOKEN,
-    OWNERSHIP_TXT_PREFIX,
-)
+# Import settings from project_settings (fetches from API or falls back to params.py)
+from recon.project_settings import get_settings
+
+# Load settings from API (if PROJECT_ID/WEBAPP_API_URL set) or params.py (CLI mode)
+_settings = get_settings()
+
+# Extract commonly used settings as module-level variables for compatibility
+TARGET_DOMAIN = _settings['TARGET_DOMAIN']
+SUBDOMAIN_LIST = _settings['SUBDOMAIN_LIST']
+USE_TOR_FOR_RECON = _settings['USE_TOR_FOR_RECON']
+USE_BRUTEFORCE_FOR_SUBDOMAINS = _settings['USE_BRUTEFORCE_FOR_SUBDOMAINS']
+SCAN_MODULES = _settings['SCAN_MODULES']
+GITHUB_ACCESS_TOKEN = _settings['GITHUB_ACCESS_TOKEN']
+GITHUB_TARGET_ORG = _settings['GITHUB_TARGET_ORG']
+UPDATE_GRAPH_DB = _settings['UPDATE_GRAPH_DB']
+USER_ID = _settings['USER_ID']
+PROJECT_ID = _settings['PROJECT_ID']
+VERIFY_DOMAIN_OWNERSHIP = _settings['VERIFY_DOMAIN_OWNERSHIP']
+OWNERSHIP_TOKEN = _settings['OWNERSHIP_TOKEN']
+OWNERSHIP_TXT_PREFIX = _settings['OWNERSHIP_TXT_PREFIX']
 
 # Import recon modules
 from recon.whois_recon import whois_lookup
@@ -212,9 +215,9 @@ def run_domain_recon(target: str, anonymous: bool = False, bruteforce: bool = Fa
         print(f"  Bruteforce Mode: {bruteforce}")
     print("=" * 70 + "\n")
 
-    # Setup output file
+    # Setup output file (use PROJECT_ID for filename)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    output_file = OUTPUT_DIR / f"recon_{root_domain}.json"
+    output_file = OUTPUT_DIR / f"recon_{PROJECT_ID}.json"
 
     # Initialize result structure with dynamic scan_type and empty modules_executed
     combined_result = {
@@ -242,7 +245,7 @@ def run_domain_recon(target: str, anonymous: bool = False, bruteforce: bool = Fa
     whois_target = root_domain
     print(f"[*] Performing WHOIS on root domain: {whois_target}")
     try:
-        whois_result = whois_lookup(whois_target, save_output=False)
+        whois_result = whois_lookup(whois_target, save_output=False, settings=_settings)
         combined_result["whois"] = whois_result.get("whois_data", {})
         print(f"[+] WHOIS data retrieved successfully")
     except Exception as e:
@@ -355,7 +358,7 @@ def run_domain_recon(target: str, anonymous: bool = False, bruteforce: bool = Fa
 
     # Step 3: Port scanning (fast port discovery)
     if "port_scan" in SCAN_MODULES:
-        combined_result = run_port_scan(combined_result, output_file=output_file)
+        combined_result = run_port_scan(combined_result, output_file=output_file, settings=_settings)
         combined_result["metadata"]["modules_executed"].append("port_scan")
         save_recon_file(combined_result, output_file)
 
@@ -386,7 +389,7 @@ def run_domain_recon(target: str, anonymous: bool = False, bruteforce: bool = Fa
 
     # Step 4: HTTP probing (technology detection, live URL discovery)
     if "http_probe" in SCAN_MODULES:
-        combined_result = run_http_probe(combined_result, output_file=output_file)
+        combined_result = run_http_probe(combined_result, output_file=output_file, settings=_settings)
         combined_result["metadata"]["modules_executed"].append("http_probe")
         save_recon_file(combined_result, output_file)
 
@@ -430,7 +433,7 @@ def run_domain_recon(target: str, anonymous: bool = False, bruteforce: bool = Fa
     else:
         # Step 5: Resource enumeration (endpoint discovery & classification)
         if "resource_enum" in SCAN_MODULES:
-            combined_result = run_resource_enum(combined_result, output_file=output_file)
+            combined_result = run_resource_enum(combined_result, output_file=output_file, settings=_settings)
             combined_result["metadata"]["modules_executed"].append("resource_enum")
             save_recon_file(combined_result, output_file)
 
@@ -461,12 +464,12 @@ def run_domain_recon(target: str, anonymous: bool = False, bruteforce: bool = Fa
 
         # Step 6: Vulnerability scanning (web application vulns) + MITRE enrichment
         if "vuln_scan" in SCAN_MODULES:
-            combined_result = run_vuln_scan(combined_result, output_file=output_file)
+            combined_result = run_vuln_scan(combined_result, output_file=output_file, settings=_settings)
             combined_result["metadata"]["modules_executed"].append("vuln_scan")
             save_recon_file(combined_result, output_file)
 
             # Automatically run MITRE CWE/CAPEC enrichment after vuln_scan
-            combined_result = run_mitre_enrichment(combined_result, output_file=output_file)
+            combined_result = run_mitre_enrichment(combined_result, output_file=output_file, settings=_settings)
             save_recon_file(combined_result, output_file)
 
             # Update Graph DB with vuln scan data
@@ -544,15 +547,16 @@ def run_domain_recon(target: str, anonymous: bool = False, bruteforce: bool = Fa
     return combined_result
 
 
-def run_github_recon(token: str, target: str) -> list:
+def run_github_recon(token: str, target: str, settings: dict = None) -> list:
     """
     Run GitHub secret hunting.
     Produces a separate JSON file for GitHub findings.
-    
+
     Args:
         token: GitHub personal access token
         target: Organization or username to scan
-        
+        settings: Settings dict from project_settings.get_settings()
+
     Returns:
         List of findings
     """
@@ -561,14 +565,14 @@ def run_github_recon(token: str, target: str) -> list:
     print("=" * 70)
     print(f"  Target: {target}")
     print("=" * 70 + "\n")
-    
+
     if not token:
         print("[!] GitHub access token not configured. Skipping GitHub recon.")
         return []
-    
-    hunter = GitHubSecretHunter(token, target)
+
+    hunter = GitHubSecretHunter(token, target, settings=settings)
     findings = hunter.run()
-    
+
     return findings
 
 
@@ -630,7 +634,7 @@ def main():
             print("[!] Anonymity module not found, proceeding without Tor status check")
 
     # Phase 1 & 2: Domain recon (WHOIS + Subdomains + DNS) - Combined JSON
-    output_file = Path(__file__).parent / "output" / f"recon_{root_domain}.json"
+    output_file = Path(__file__).parent / "output" / f"recon_{PROJECT_ID}.json"
 
     if "domain_discovery" in SCAN_MODULES:
         domain_result = run_domain_recon(
@@ -652,7 +656,7 @@ def main():
         
         # Run port_scan if in SCAN_MODULES (when domain_discovery is skipped)
         if "port_scan" in SCAN_MODULES:
-            domain_result = run_port_scan(domain_result, output_file=output_file)
+            domain_result = run_port_scan(domain_result, output_file=output_file, settings=_settings)
             if "metadata" in domain_result and "modules_executed" in domain_result["metadata"]:
                 if "port_scan" not in domain_result["metadata"]["modules_executed"]:
                     domain_result["metadata"]["modules_executed"].append("port_scan")
@@ -687,7 +691,7 @@ def main():
         
         # Run http_probe if in SCAN_MODULES (when domain_discovery is skipped)
         if "http_probe" in SCAN_MODULES:
-            domain_result = run_http_probe(domain_result, output_file=output_file)
+            domain_result = run_http_probe(domain_result, output_file=output_file, settings=_settings)
             if "metadata" in domain_result and "modules_executed" in domain_result["metadata"]:
                 if "http_probe" not in domain_result["metadata"]["modules_executed"]:
                     domain_result["metadata"]["modules_executed"].append("http_probe")
@@ -737,7 +741,7 @@ def main():
         else:
             # Run resource_enum if in SCAN_MODULES (when domain_discovery is skipped)
             if "resource_enum" in SCAN_MODULES:
-                domain_result = run_resource_enum(domain_result, output_file=output_file)
+                domain_result = run_resource_enum(domain_result, output_file=output_file, settings=_settings)
                 if "metadata" in domain_result and "modules_executed" in domain_result["metadata"]:
                     if "resource_enum" not in domain_result["metadata"]["modules_executed"]:
                         domain_result["metadata"]["modules_executed"].append("resource_enum")
@@ -773,7 +777,7 @@ def main():
             # Run vuln_scan if in SCAN_MODULES (when domain_discovery is skipped)
             # vuln_scan automatically includes MITRE CWE/CAPEC enrichment
             if "vuln_scan" in SCAN_MODULES:
-                domain_result = run_vuln_scan(domain_result, output_file=output_file)
+                domain_result = run_vuln_scan(domain_result, output_file=output_file, settings=_settings)
                 if "metadata" in domain_result and "modules_executed" in domain_result["metadata"]:
                     if "vuln_scan" not in domain_result["metadata"]["modules_executed"]:
                         domain_result["metadata"]["modules_executed"].append("vuln_scan")
@@ -781,7 +785,7 @@ def main():
                     json.dump(domain_result, f, indent=2)
 
                 # Automatically run MITRE CWE/CAPEC enrichment after vuln_scan
-                domain_result = run_mitre_enrichment(domain_result, output_file=output_file)
+                domain_result = run_mitre_enrichment(domain_result, output_file=output_file, settings=_settings)
                 with open(output_file, 'w') as f:
                     json.dump(domain_result, f, indent=2)
 
@@ -814,7 +818,7 @@ def main():
     # Phase 3: GitHub secret hunt - Separate JSON (if enabled)
     github_findings = []
     if "github" in SCAN_MODULES:
-        github_findings = run_github_recon(GITHUB_ACCESS_TOKEN, GITHUB_TARGET_ORG)
+        github_findings = run_github_recon(GITHUB_ACCESS_TOKEN, GITHUB_TARGET_ORG, settings=_settings)
     else:
         print("\n[*] GitHub Secret Hunt: SKIPPED (add 'github' to SCAN_MODULES to enable)")
 
@@ -894,7 +898,7 @@ def main():
     print(f"  GitHub: {github_status}")
     
     print("─" * 50)
-    print("  Output: recon_{}.json".format(root_domain))
+    print("  Output: recon_{}.json".format(PROJECT_ID))
     if "github" in SCAN_MODULES:
         print(f"  Output: github_secrets_{GITHUB_TARGET_ORG}.json")
     print("─" * 50)

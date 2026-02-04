@@ -74,8 +74,14 @@ def ensure_kiterunner_binary(wordlist_name: str) -> Tuple[Optional[str], Optiona
         try:
             archive_path = kr_dir / asset_name
 
-            # Download archive
-            urllib.request.urlretrieve(download_url, archive_path)
+            # Download archive with User-Agent header
+            request = urllib.request.Request(
+                download_url,
+                headers={'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) RedAmon/1.0'}
+            )
+            with urllib.request.urlopen(request) as response:
+                with open(archive_path, 'wb') as f:
+                    f.write(response.read())
 
             # Extract archive
             if asset_name.endswith(".tar.gz"):
@@ -116,8 +122,14 @@ def ensure_kiterunner_binary(wordlist_name: str) -> Tuple[Optional[str], Optiona
             try:
                 archive_path = kr_dir / f"{base_wordlist}.kite.tar.gz"
 
-                # Download compressed wordlist
-                urllib.request.urlretrieve(wordlist_url, archive_path)
+                # Download compressed wordlist with User-Agent header (required by CDN)
+                request = urllib.request.Request(
+                    wordlist_url,
+                    headers={'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) RedAmon/1.0'}
+                )
+                with urllib.request.urlopen(request) as response:
+                    with open(archive_path, 'wb') as f:
+                        f.write(response.read())
 
                 # Extract wordlist
                 with tarfile.open(archive_path, "r:gz") as tar:

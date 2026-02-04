@@ -29,7 +29,7 @@ from datetime import datetime
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from params import USER_ID, PROJECT_ID, TARGET_DOMAIN
+from params import USER_ID, PROJECT_ID
 from graph_db import Neo4jClient
 
 # =============================================================================
@@ -84,26 +84,22 @@ def load_recon_json(json_path: Path) -> dict:
         return json.load(f)
 
 
-def get_recon_file_path(target_domain: str) -> Path:
-    """Get the path to the recon JSON file for a target domain.
+def get_recon_file_path(project_id: str) -> Path:
+    """Get the path to the recon JSON file for a project.
 
     Args:
-        target_domain: Root domain (e.g., "vulnweb.com")
-                      TARGET_DOMAIN in params.py must always be a root domain.
+        project_id: Project ID used in the filename
     """
-    # TARGET_DOMAIN is always the root domain
-    return PROJECT_ROOT / "recon" / "output" / f"recon_{target_domain}.json"
+    return PROJECT_ROOT / "recon" / "output" / f"recon_{project_id}.json"
 
 
-def get_gvm_file_path(target_domain: str) -> Path:
-    """Get the path to the GVM JSON file for a target domain.
+def get_gvm_file_path(project_id: str) -> Path:
+    """Get the path to the GVM JSON file for a project.
 
     Args:
-        target_domain: Root domain (e.g., "vulnweb.com")
-                      TARGET_DOMAIN in params.py must always be a root domain.
+        project_id: Project ID used in the filename
     """
-    # TARGET_DOMAIN is always the root domain
-    return PROJECT_ROOT / "gvm_scan" / "output" / f"gvm_{target_domain}.json"
+    return PROJECT_ROOT / "gvm_scan" / "output" / f"gvm_{project_id}.json"
 
 
 def load_gvm_json(json_path: Path) -> dict:
@@ -285,7 +281,7 @@ def main():
     if RECON_JSON_PATH:
         json_path = Path(RECON_JSON_PATH)
     else:
-        json_path = get_recon_file_path(TARGET_DOMAIN)
+        json_path = get_recon_file_path(project_id)
 
     print(f"[*] Loading recon data from: {json_path}")
 
@@ -311,7 +307,7 @@ def main():
     if GVM_JSON_PATH:
         gvm_path = Path(GVM_JSON_PATH)
     else:
-        gvm_path = get_gvm_file_path(TARGET_DOMAIN)
+        gvm_path = get_gvm_file_path(project_id)
 
     gvm_data = None
     if gvm_path.exists():

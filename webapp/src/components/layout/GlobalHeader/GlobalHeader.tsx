@@ -2,6 +2,7 @@
 
 import { Search, Bell, Settings, ChevronDown, Crosshair } from 'lucide-react'
 import { ThemeToggle } from '@/components/ThemeToggle'
+import { ProjectSelector } from './ProjectSelector'
 import styles from './GlobalHeader.module.css'
 
 export function GlobalHeader() {
@@ -28,6 +29,11 @@ export function GlobalHeader() {
       </div>
 
       <div className={styles.actions}>
+        {/* Project Selector */}
+        <ProjectSelector />
+
+        <div className={styles.divider} />
+
         {/* Notifications - Mock */}
         <button className={styles.iconButton} title="Notifications">
           <Bell size={16} />

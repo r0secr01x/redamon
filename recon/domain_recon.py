@@ -20,7 +20,7 @@ import sys
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from recon.params import DNS_MAX_RETRIES
+# Settings are passed from main.py to avoid multiple database queries
 
 OUTPUT_DIR = Path(__file__).parent / "output"
 DNS_RECORD_TYPES = ['A', 'AAAA', 'MX', 'NS', 'TXT', 'SOA', 'CNAME']
@@ -135,20 +135,18 @@ def run_knockpy(domain: str, proxychains_prefix: list, bruteforce: bool = False)
     return subdomains
 
 
-def dns_lookup_single(hostname: str, rtype: str, max_retries: int = None) -> list:
+def dns_lookup_single(hostname: str, rtype: str, max_retries: int = 3) -> list:
     """
     Perform DNS lookup for a single record type with retry logic.
-    
+
     Args:
         hostname: Domain or subdomain to resolve
         rtype: DNS record type (A, AAAA, MX, etc.)
-        max_retries: Maximum retry attempts (defaults to DNS_MAX_RETRIES)
-        
+        max_retries: Maximum retry attempts
+
     Returns:
         List of DNS records or None if not found/failed
     """
-    if max_retries is None:
-        max_retries = DNS_MAX_RETRIES
     
     last_error = None
     
@@ -179,19 +177,17 @@ def dns_lookup_single(hostname: str, rtype: str, max_retries: int = None) -> lis
     return None
 
 
-def dns_lookup(hostname: str, max_retries: int = None) -> dict:
+def dns_lookup(hostname: str, max_retries: int = 3) -> dict:
     """
     Perform full DNS lookup for all record types with retry logic.
-    
+
     Args:
         hostname: Domain or subdomain to resolve
-        max_retries: Maximum retry attempts per record type (defaults to DNS_MAX_RETRIES)
-        
+        max_retries: Maximum retry attempts per record type
+
     Returns:
         Dictionary with all DNS records
     """
-    if max_retries is None:
-        max_retries = DNS_MAX_RETRIES
     
     dns_data = {}
     
@@ -315,18 +311,19 @@ def resolve_all_dns(domain: str, subdomains: list) -> dict:
     return result
 
 
-def discover_subdomains(domain: str, anonymous: bool = False, bruteforce: bool = False, 
-                        resolve: bool = True, save_output: bool = True) -> dict:
+def discover_subdomains(domain: str, anonymous: bool = False, bruteforce: bool = False,
+                        resolve: bool = True, save_output: bool = True, project_id: str = None) -> dict:
     """
     Main discovery function - subdomain enumeration + DNS resolution.
-    
+
     Args:
         domain: Target domain (e.g., "example.com")
         anonymous: Use Tor to hide real IP
         bruteforce: Enable Knockpy bruteforce mode (slower but more thorough)
         resolve: Whether to resolve DNS for all hosts
         save_output: Whether to save JSON report
-        
+        project_id: Project ID for filename (if None, falls back to domain)
+
     Returns:
         Complete reconnaissance data for domain and subdomains
     """
@@ -369,14 +366,15 @@ def discover_subdomains(domain: str, anonymous: bool = False, bruteforce: bool =
     if resolve:
         result["dns"] = resolve_all_dns(domain, all_subs)
     
-    # Save JSON output
+    # Save JSON output (use project_id for filename if provided, fallback to domain)
     if save_output:
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        output_file = OUTPUT_DIR / f"recon_{domain}.json"
-        
+        file_id = project_id if project_id else domain
+        output_file = OUTPUT_DIR / f"recon_{file_id}.json"
+
         with open(output_file, 'w') as f:
             json.dump(result, f, indent=2)
-        
+
         print(f"\n{'=' * 50}")
         print(f"[+] TOTAL: {len(all_subs)} unique subdomains")
         print(f"[+] SAVED: {output_file}")

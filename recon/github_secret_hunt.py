@@ -17,7 +17,6 @@ Features:
 
 import re
 import os
-import sys
 import json
 import math
 import time
@@ -26,25 +25,23 @@ from collections import defaultdict
 from typing import Optional, Dict, List, Set
 from pathlib import Path
 
-# Add parent directories to path for imports
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
 try:
     from github import Github, Auth
     from github.GithubException import RateLimitExceededException, GithubException
 except ImportError:
     print("[!] PyGithub not installed. Run: pip install PyGithub")
-    sys.exit(1)
+    raise
 
-from recon.params import (
-    GITHUB_ACCESS_TOKEN,
-    GITHUB_TARGET_ORG,
-    GITHUB_SCAN_MEMBERS,
-    GITHUB_SCAN_GISTS,
-    GITHUB_SCAN_COMMITS,
-    GITHUB_MAX_COMMITS,
-    GITHUB_OUTPUT_JSON,
-)
+# Default settings for GitHub scanning (used when no settings provided)
+DEFAULT_GITHUB_SETTINGS = {
+    'GITHUB_ACCESS_TOKEN': os.getenv('GITHUB_ACCESS_TOKEN', ''),
+    'GITHUB_TARGET_ORG': '',
+    'GITHUB_SCAN_MEMBERS': False,
+    'GITHUB_SCAN_GISTS': True,
+    'GITHUB_SCAN_COMMITS': True,
+    'GITHUB_MAX_COMMITS': 100,
+    'GITHUB_OUTPUT_JSON': True,
+}
 
 # =============================================================================
 # SECRET PATTERNS - Comprehensive regex patterns for secret detection
@@ -246,13 +243,16 @@ def find_high_entropy_strings(content: str, threshold: float = 4.5) -> List[Dict
 
 class GitHubSecretHunter:
     """Advanced GitHub secret scanning tool."""
-    
-    def __init__(self, token: str, target: str):
+
+    def __init__(self, token: str, target: str, settings: Optional[Dict] = None):
         self.token = token
         self.target = target
         self.auth = Auth.Token(token)
         self.github = Github(auth=self.auth)
-        
+
+        # Store settings (use defaults if not provided)
+        self.settings = settings or DEFAULT_GITHUB_SETTINGS
+
         self.findings: List[Dict] = []
         self.scanned_repos: Set[str] = set()
         self.stats = {
@@ -264,24 +264,24 @@ class GitHubSecretHunter:
             "sensitive_files": 0,
             "high_entropy": 0,
         }
-        
+
         # Rate limit tracking
         self.rate_limit_hits = 0
-        
+
         # Initialize output file for incremental saving
         self.output_dir = Path(__file__).parent / "output"
         self.output_dir.mkdir(exist_ok=True)
-        
+
         # Create output filename
         self.scan_start_time = datetime.now()
         self.output_file = self.output_dir / f"github_secrets_{target}.json"
-        
+
         # Initialize the JSON file immediately
         self._init_output_file()
         
     def _init_output_file(self):
         """Initialize the JSON output file at scan start."""
-        if not GITHUB_OUTPUT_JSON:
+        if not self.settings.get('GITHUB_OUTPUT_JSON', True):
             return
             
         initial_data = {
@@ -300,7 +300,7 @@ class GitHubSecretHunter:
         
     def _save_incremental(self):
         """Save current state to JSON file (called after each finding)."""
-        if not GITHUB_OUTPUT_JSON:
+        if not self.settings.get('GITHUB_OUTPUT_JSON', True):
             return
             
         data = {
@@ -457,13 +457,14 @@ class GitHubSecretHunter:
                 
     def scan_commit_history(self, repo):
         """Scan commit history for leaked secrets."""
-        if not GITHUB_SCAN_COMMITS:
+        if not self.settings.get('GITHUB_SCAN_COMMITS', True):
             return
-            
+
         try:
             commits = repo.get_commits()
             count = 0
-            max_commits = GITHUB_MAX_COMMITS if GITHUB_MAX_COMMITS > 0 else float('inf')
+            max_commits_setting = self.settings.get('GITHUB_MAX_COMMITS', 100)
+            max_commits = max_commits_setting if max_commits_setting > 0 else float('inf')
             
             for commit in commits:
                 if count >= max_commits:
@@ -503,7 +504,7 @@ class GitHubSecretHunter:
         self.scan_repo_contents(repo)
         
         # 3. Commit history scan (optional, slow)
-        if GITHUB_SCAN_COMMITS:
+        if self.settings.get('GITHUB_SCAN_COMMITS', True):
             self.scan_commit_history(repo)
             
         self.stats["repos_scanned"] += 1
@@ -514,7 +515,7 @@ class GitHubSecretHunter:
         
     def scan_gists(self, user):
         """Scan user gists for secrets."""
-        if not GITHUB_SCAN_GISTS:
+        if not self.settings.get('GITHUB_SCAN_GISTS', True):
             return
             
         try:
@@ -551,15 +552,15 @@ class GitHubSecretHunter:
                 self.scan_repo(repo)
                 
             # Scan member repos and gists
-            if GITHUB_SCAN_MEMBERS:
+            if self.settings.get('GITHUB_SCAN_MEMBERS', False):
                 print("\n[*] Scanning organization members...")
                 for member in org.get_members():
                     print(f"\n[*] Member: {member.login}")
-                    
+
                     for repo in member.get_repos():
                         self.scan_repo(repo)
-                        
-                    if GITHUB_SCAN_GISTS:
+
+                    if self.settings.get('GITHUB_SCAN_GISTS', True):
                         self.scan_gists(member)
                         
         except GithubException as e:
@@ -579,7 +580,7 @@ class GitHubSecretHunter:
             for repo in user.get_repos():
                 self.scan_repo(repo)
                 
-            if GITHUB_SCAN_GISTS:
+            if self.settings.get('GITHUB_SCAN_GISTS', True):
                 print("\n[*] Scanning user gists...")
                 self.scan_gists(user)
                 
@@ -588,7 +589,7 @@ class GitHubSecretHunter:
             
     def save_results(self, status: str = "completed"):
         """Save final results to JSON file."""
-        if not GITHUB_OUTPUT_JSON:
+        if not self.settings.get('GITHUB_OUTPUT_JSON', True):
             return
             
         scan_end_time = datetime.now()

@@ -29,61 +29,7 @@ import sys
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from recon.params import (
-    USE_TOR_FOR_RECON,
-    # Katana crawler settings
-    KATANA_DOCKER_IMAGE,
-    KATANA_DEPTH,
-    KATANA_MAX_URLS,
-    KATANA_RATE_LIMIT,
-    KATANA_TIMEOUT,
-    KATANA_JS_CRAWL,
-    KATANA_PARAMS_ONLY,
-    KATANA_SCOPE,
-    KATANA_CUSTOM_HEADERS,
-    KATANA_EXCLUDE_PATTERNS,
-    # GAU passive URL discovery settings
-    GAU_ENABLED,
-    GAU_DOCKER_IMAGE,
-    GAU_PROVIDERS,
-    GAU_MAX_URLS,
-    GAU_TIMEOUT,
-    GAU_THREADS,
-    GAU_BLACKLIST_EXTENSIONS,
-    GAU_YEAR_RANGE,
-    GAU_VERBOSE,
-    GAU_VERIFY_URLS,
-    GAU_VERIFY_DOCKER_IMAGE,
-    GAU_VERIFY_TIMEOUT,
-    GAU_VERIFY_RATE_LIMIT,
-    GAU_VERIFY_THREADS,
-    GAU_VERIFY_ACCEPT_STATUS,
-    # GAU method detection
-    GAU_DETECT_METHODS,
-    GAU_METHOD_DETECT_TIMEOUT,
-    GAU_METHOD_DETECT_RATE_LIMIT,
-    GAU_METHOD_DETECT_THREADS,
-    GAU_FILTER_DEAD_ENDPOINTS,
-    # Kiterunner API discovery settings
-    KITERUNNER_ENABLED,
-    KITERUNNER_WORDLISTS,
-    KITERUNNER_RATE_LIMIT,
-    KITERUNNER_CONNECTIONS,
-    KITERUNNER_TIMEOUT,
-    KITERUNNER_SCAN_TIMEOUT,
-    KITERUNNER_THREADS,
-    KITERUNNER_IGNORE_STATUS,
-    KITERUNNER_MIN_CONTENT_LENGTH,
-    KITERUNNER_MATCH_STATUS,
-    KITERUNNER_HEADERS,
-    # Kiterunner method detection settings
-    KITERUNNER_DETECT_METHODS,
-    KITERUNNER_METHOD_DETECTION_MODE,
-    KITERUNNER_BRUTEFORCE_METHODS,
-    KITERUNNER_METHOD_DETECT_TIMEOUT,
-    KITERUNNER_METHOD_DETECT_RATE_LIMIT,
-    KITERUNNER_METHOD_DETECT_THREADS,
-)
+# Settings are passed from main.py to avoid multiple database queries
 
 # Import from helpers (shared with vuln_scan)
 from recon.helpers import (
@@ -117,7 +63,7 @@ from recon.helpers.resource_enum import (
 # Main Function
 # =============================================================================
 
-def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None) -> dict:
+def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, settings: dict = None) -> dict:
     """
     Run resource enumeration to discover and classify all endpoints.
 
@@ -130,6 +76,7 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None) -> d
     Args:
         recon_data: Reconnaissance data from previous modules
         output_file: Optional path to save incremental results
+        settings: Settings dictionary from main.py
 
     Returns:
         Updated recon_data with resource_enum results
@@ -138,6 +85,67 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None) -> d
     print("         RedAmon - Resource Enumeration")
     print("         (Katana + GAU + Kiterunner Parallel Discovery)")
     print("=" * 70)
+
+    # Use passed settings or empty dict as fallback
+    if settings is None:
+        settings = {}
+
+    # Extract settings from passed dict
+    # Katana settings
+    KATANA_DOCKER_IMAGE = settings.get('KATANA_DOCKER_IMAGE', 'projectdiscovery/katana:latest')
+    KATANA_DEPTH = settings.get('KATANA_DEPTH', 3)
+    KATANA_MAX_URLS = settings.get('KATANA_MAX_URLS', 5000)
+    KATANA_RATE_LIMIT = settings.get('KATANA_RATE_LIMIT', 100)
+    KATANA_TIMEOUT = settings.get('KATANA_TIMEOUT', 10)
+    KATANA_JS_CRAWL = settings.get('KATANA_JS_CRAWL', True)
+    KATANA_PARAMS_ONLY = settings.get('KATANA_PARAMS_ONLY', False)
+    KATANA_SCOPE = settings.get('KATANA_SCOPE', 'dn')
+    KATANA_CUSTOM_HEADERS = settings.get('KATANA_CUSTOM_HEADERS', [])
+    KATANA_EXCLUDE_PATTERNS = settings.get('KATANA_EXCLUDE_PATTERNS', [])
+
+    # GAU settings
+    GAU_ENABLED = settings.get('GAU_ENABLED', True)
+    GAU_DOCKER_IMAGE = settings.get('GAU_DOCKER_IMAGE', 'sxcurity/gau:latest')
+    GAU_PROVIDERS = settings.get('GAU_PROVIDERS', ['wayback', 'commoncrawl', 'otx', 'urlscan'])
+    GAU_THREADS = settings.get('GAU_THREADS', 2)
+    GAU_TIMEOUT = settings.get('GAU_TIMEOUT', 60)
+    GAU_BLACKLIST_EXTENSIONS = settings.get('GAU_BLACKLIST_EXTENSIONS', ['png', 'jpg', 'jpeg', 'gif', 'css', 'woff', 'woff2', 'ttf', 'svg', 'ico', 'eot'])
+    GAU_MAX_URLS = settings.get('GAU_MAX_URLS', 10000)
+    GAU_YEAR_RANGE = settings.get('GAU_YEAR_RANGE', None)
+    GAU_VERBOSE = settings.get('GAU_VERBOSE', False)
+    GAU_VERIFY_URLS = settings.get('GAU_VERIFY_URLS', True)
+    GAU_VERIFY_DOCKER_IMAGE = settings.get('GAU_VERIFY_DOCKER_IMAGE', 'projectdiscovery/httpx:latest')
+    GAU_VERIFY_TIMEOUT = settings.get('GAU_VERIFY_TIMEOUT', 5)
+    GAU_VERIFY_RATE_LIMIT = settings.get('GAU_VERIFY_RATE_LIMIT', 50)
+    GAU_VERIFY_THREADS = settings.get('GAU_VERIFY_THREADS', 50)
+    GAU_VERIFY_ACCEPT_STATUS = settings.get('GAU_VERIFY_ACCEPT_STATUS', ['200', '201', '301', '302', '307', '308', '401', '403'])
+    GAU_DETECT_METHODS = settings.get('GAU_DETECT_METHODS', True)
+    GAU_METHOD_DETECT_THREADS = settings.get('GAU_METHOD_DETECT_THREADS', 20)
+    GAU_METHOD_DETECT_TIMEOUT = settings.get('GAU_METHOD_DETECT_TIMEOUT', 5)
+    GAU_METHOD_DETECT_RATE_LIMIT = settings.get('GAU_METHOD_DETECT_RATE_LIMIT', 30)
+    GAU_FILTER_DEAD_ENDPOINTS = settings.get('GAU_FILTER_DEAD_ENDPOINTS', True)
+
+    # Kiterunner settings
+    KITERUNNER_ENABLED = settings.get('KITERUNNER_ENABLED', False)
+    KITERUNNER_WORDLISTS = settings.get('KITERUNNER_WORDLISTS', ['apiroutes-210228'])
+    KITERUNNER_RATE_LIMIT = settings.get('KITERUNNER_RATE_LIMIT', 100)
+    KITERUNNER_CONNECTIONS = settings.get('KITERUNNER_CONNECTIONS', 50)
+    KITERUNNER_TIMEOUT = settings.get('KITERUNNER_TIMEOUT', 3)
+    KITERUNNER_SCAN_TIMEOUT = settings.get('KITERUNNER_SCAN_TIMEOUT', 300)
+    KITERUNNER_THREADS = settings.get('KITERUNNER_THREADS', 10)
+    KITERUNNER_IGNORE_STATUS = settings.get('KITERUNNER_IGNORE_STATUS', ['404', '429', '503'])
+    KITERUNNER_MATCH_STATUS = settings.get('KITERUNNER_MATCH_STATUS', [])
+    KITERUNNER_MIN_CONTENT_LENGTH = settings.get('KITERUNNER_MIN_CONTENT_LENGTH', 0)
+    KITERUNNER_HEADERS = settings.get('KITERUNNER_HEADERS', [])
+    KITERUNNER_DETECT_METHODS = settings.get('KITERUNNER_DETECT_METHODS', True)
+    KITERUNNER_METHOD_DETECTION_MODE = settings.get('KITERUNNER_METHOD_DETECTION_MODE', 'options')
+    KITERUNNER_BRUTEFORCE_METHODS = settings.get('KITERUNNER_BRUTEFORCE_METHODS', ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
+    KITERUNNER_METHOD_DETECT_TIMEOUT = settings.get('KITERUNNER_METHOD_DETECT_TIMEOUT', 3)
+    KITERUNNER_METHOD_DETECT_RATE_LIMIT = settings.get('KITERUNNER_METHOD_DETECT_RATE_LIMIT', 50)
+    KITERUNNER_METHOD_DETECT_THREADS = settings.get('KITERUNNER_METHOD_DETECT_THREADS', 20)
+
+    # General settings
+    USE_TOR_FOR_RECON = settings.get('USE_TOR_FOR_RECON', False)
 
     # Check Docker
     if not is_docker_installed():
@@ -291,8 +299,11 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None) -> d
         for wordlist_name in KITERUNNER_WORDLISTS:
             print(f"\n    [*] Processing wordlist: {wordlist_name}")
             try:
-                # Use ASSETNOTE: prefix for -A flag wordlists
-                wordlist_path = f"ASSETNOTE:{wordlist_name}"
+                # Get the proper wordlist path (downloads if needed, or returns ASSETNOTE: prefix)
+                _, wordlist_path = ensure_kiterunner_binary(wordlist_name)
+                if not wordlist_path:
+                    print(f"    [!] Could not get wordlist: {wordlist_name}")
+                    continue
                 wordlist_results = run_kiterunner_discovery(
                     target_urls,
                     kr_binary_path,
@@ -592,10 +603,14 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         recon_file = Path(sys.argv[1])
         if recon_file.exists():
+            # Load settings for standalone usage
+            from recon.project_settings import get_settings
+            settings = get_settings()
+
             with open(recon_file, 'r') as f:
                 recon_data = json.load(f)
 
-            result = run_resource_enum(recon_data, output_file=recon_file)
+            result = run_resource_enum(recon_data, output_file=recon_file, settings=settings)
             print(f"\n[+] Results saved to: {recon_file}")
         else:
             print(f"[!] File not found: {recon_file}")

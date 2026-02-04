@@ -1,7 +1,9 @@
 'use client'
 
-import { Sparkles } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Sparkles, Play, Download, Loader2, Terminal, Settings } from 'lucide-react'
 import { Toggle } from '@/components/ui'
+import type { ReconStatus } from '@/lib/recon-types'
 import styles from './GraphToolbar.module.css'
 
 interface GraphToolbarProps {
@@ -12,6 +14,13 @@ interface GraphToolbarProps {
   onToggleLabels: (value: boolean) => void
   onToggleAI?: () => void
   isAIOpen?: boolean
+  // Recon props
+  onStartRecon?: () => void
+  onDownloadJSON?: () => void
+  onToggleLogs?: () => void
+  reconStatus?: ReconStatus
+  hasReconData?: boolean
+  isLogsOpen?: boolean
 }
 
 export function GraphToolbar({
@@ -22,7 +31,23 @@ export function GraphToolbar({
   onToggleLabels,
   onToggleAI,
   isAIOpen = false,
+  // Recon props
+  onStartRecon,
+  onDownloadJSON,
+  onToggleLogs,
+  reconStatus = 'idle',
+  hasReconData = false,
+  isLogsOpen = false,
 }: GraphToolbarProps) {
+  const router = useRouter()
+  const isReconRunning = reconStatus === 'running' || reconStatus === 'starting'
+
+  const handleOpenSettings = () => {
+    if (projectId) {
+      router.push(`/projects/${projectId}/settings`)
+    }
+  }
+
   return (
     <div className={styles.toolbar}>
       <div className={styles.section}>
@@ -51,9 +76,57 @@ export function GraphToolbar({
 
       <div className={styles.spacer} />
 
+      {/* Recon Actions */}
+      {projectId && (
+        <>
+          <button
+            className={`${styles.reconButton} ${isReconRunning ? styles.reconButtonActive : ''}`}
+            onClick={onStartRecon}
+            disabled={isReconRunning}
+            title={isReconRunning ? 'Recon in progress...' : 'Start Reconnaissance'}
+          >
+            {isReconRunning ? (
+              <Loader2 size={14} className={styles.spinner} />
+            ) : (
+              <Play size={14} />
+            )}
+            <span>{isReconRunning ? 'Running...' : 'Start Recon'}</span>
+          </button>
+
+          {isReconRunning && (
+            <button
+              className={`${styles.logsButton} ${isLogsOpen ? styles.logsButtonActive : ''}`}
+              onClick={onToggleLogs}
+              title="View Logs"
+            >
+              <Terminal size={14} />
+            </button>
+          )}
+
+          <button
+            className={styles.downloadButton}
+            onClick={onDownloadJSON}
+            disabled={!hasReconData || isReconRunning}
+            title={hasReconData ? 'Download Recon JSON' : 'No data available'}
+          >
+            <Download size={14} />
+          </button>
+
+          <div className={styles.divider} />
+        </>
+      )}
+
       <div className={styles.projectBadge}>
         <span className={styles.projectLabel}>Project:</span>
         <span className={styles.projectId}>{projectId}</span>
+        <button
+          className={styles.settingsButton}
+          onClick={handleOpenSettings}
+          title="Project Settings"
+          aria-label="Open project settings"
+        >
+          <Settings size={14} />
+        </button>
       </div>
 
       <div className={styles.divider} />

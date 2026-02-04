@@ -18,7 +18,8 @@ RedAmon/
 │
 ├── recon/                # Reconnaissance Module (Phase 1)
 │   ├── main.py           # Main entry point
-│   ├── params.py         # Configuration parameters
+│   ├── params.py         # Default configuration parameters
+│   ├── project_settings.py  # Fetches settings from webapp API
 │   ├── domain_recon.py   # Subdomain discovery (crt.sh, HackerTarget, Knockpy)
 │   ├── port_scan.py      # Port scanning (naabu)
 │   ├── http_probe.py     # HTTP probing (httpx, headers, tech detection)
@@ -31,6 +32,18 @@ RedAmon/
 │   ├── output/           # Scan results (JSON)
 │   ├── Dockerfile        # Kali-based container
 │   └── docker-compose.yml
+│
+├── recon_orchestrator/   # Recon Container Orchestrator (NEW)
+│   ├── api.py            # FastAPI with SSE endpoints
+│   ├── container_manager.py  # Docker SDK lifecycle management
+│   ├── models.py         # Pydantic models (ReconStatus, ReconState)
+│   ├── requirements.txt  # Python dependencies
+│   ├── Dockerfile
+│   └── docker-compose.yml
+│
+├── postgres_db/          # PostgreSQL Database (NEW)
+│   ├── docker-compose.yml  # PostgreSQL container
+│   └── .env              # Database credentials
 │
 ├── gvm_scan/             # GVM Vulnerability Scanner (Phase 2)
 │   ├── main.py           # Entry point
@@ -69,10 +82,14 @@ RedAmon/
 │   └── docker-compose.yml
 │
 ├── webapp/               # Next.js Frontend Application
+│   ├── prisma/           # Prisma ORM schema
+│   │   └── schema.prisma # Database models (Project, User, etc.)
 │   ├── src/
 │   │   ├── app/          # Next.js App Router pages
+│   │   │   ├── api/recon/  # Recon API routes (start, status, logs, download)
+│   │   │   └── graph/    # Graph visualization page with recon control
 │   │   ├── components/   # React components
-│   │   ├── hooks/        # Custom hooks
+│   │   ├── hooks/        # Custom hooks (useReconStatus, useReconSSE)
 │   │   ├── lib/          # Utilities, API clients
 │   │   ├── providers/    # React context providers
 │   │   └── styles/       # Design tokens & themes
@@ -100,14 +117,67 @@ Domain → Subdomain Discovery → DNS Resolution → Port Scanning
        → MITRE Mapping → JSON Output → Neo4j Import
 ```
 
+**Configuration Sources (in order of precedence):**
+1. **Webapp API** - When `PROJECT_ID` and `WEBAPP_API_URL` env vars are set, settings are fetched from PostgreSQL via the webapp API
+2. **Environment Variables** - Override individual settings
+3. **params.py** - Default fallback values
+
 **Key Commands:**
 ```bash
+# From CLI (uses params.py defaults)
 cd recon/
 docker-compose build --network=host
 docker-compose run --rm recon python /app/recon/main.py
+
+# From Webapp (recommended - uses project settings from PostgreSQL)
+# Click "Start Recon" in the Graph page
 ```
 
-### 2. GVM Scanner (`gvm_scan/`)
+### 2. Recon Orchestrator (`recon_orchestrator/`)
+
+FastAPI service that manages recon container lifecycle with real-time log streaming.
+
+**Features:**
+- Start/stop recon containers via REST API
+- Server-Sent Events (SSE) for real-time log streaming
+- Phase detection from log output
+- Docker SDK for container management
+
+**Endpoints:**
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/recon/{projectId}/start` | POST | Start recon for project |
+| `/recon/{projectId}/status` | GET | Get current status |
+| `/recon/{projectId}/logs` | GET | SSE log stream |
+| `/recon/{projectId}/stop` | POST | Stop running recon |
+
+**Key Commands:**
+```bash
+cd recon_orchestrator/
+docker-compose build
+docker-compose up -d
+curl http://localhost:8010/health
+```
+
+### 3. PostgreSQL Database (`postgres_db/`)
+
+Stores project configurations with 169+ configurable parameters.
+
+**Key Features:**
+- Prisma ORM integration with webapp
+- Project-specific scan settings
+- User and project management
+
+**Key Commands:**
+```bash
+cd postgres_db/
+docker-compose up -d
+# Schema managed via Prisma in webapp/
+cd ../webapp && npx prisma db push
+```
+
+### 4. GVM Scanner (`gvm_scan/`)
 
 Greenbone Vulnerability Management (OpenVAS) for deep vulnerability scanning.
 
@@ -115,7 +185,7 @@ Greenbone Vulnerability Management (OpenVAS) for deep vulnerability scanning.
 - 170,000+ Network Vulnerability Tests (NVTs)
 - CVSS scoring and CVE mapping
 
-### 3. Graph Database (`graph_db/`)
+### 5. Graph Database (`graph_db/`)
 
 Neo4j for storing and querying security data relationships.
 
@@ -128,7 +198,7 @@ Neo4j for storing and querying security data relationships.
 - `neo4j_client.py` - Full CRUD operations
 - `update_graph_from_json.py` - Import scan results
 
-### 4. MCP Servers (`mcp/`)
+### 6. MCP Servers (`mcp/`)
 
 Model Context Protocol servers exposing security tools to AI agents.
 
@@ -140,7 +210,7 @@ Model Context Protocol servers exposing security tools to AI agents.
 | nuclei | 8002 | nuclei | Vulnerability scanning |
 | metasploit | 8003 | msfconsole | Exploitation |
 
-### 5. Agent Orchestrator (`agentic/`)
+### 7. Agent Orchestrator (`agentic/`)
 
 LangGraph-based AI agent with REST API for autonomous pentesting.
 
@@ -158,9 +228,17 @@ POST /chat
 }
 ```
 
-### 6. Webapp (`webapp/`)
+### 8. Webapp (`webapp/`)
 
-Next.js 16 frontend for graph visualization. See `.claude/webapp.md` for detailed guidelines.
+Next.js 16 frontend for graph visualization and recon control.
+
+**Key Features:**
+- Interactive graph visualization (2D/3D)
+- Recon control panel with real-time log streaming
+- AI chat interface with WebSocket
+- Project management with PostgreSQL storage
+
+See `.claude/webapp.md` for detailed guidelines.
 
 ---
 
@@ -179,7 +257,21 @@ docker-compose up -d
 
 ### Configuration Pattern
 
-Each module uses `params.py` for configuration:
+**Recon Module** uses a hierarchical configuration system:
+
+1. **Webapp API (Primary)** - When started from webapp, settings are fetched from PostgreSQL:
+```python
+# recon/project_settings.py
+# Automatically fetches from: GET /api/projects/{projectId}
+# Includes 169+ configurable parameters stored in Project model
+```
+
+2. **Environment Variables** - Override individual settings:
+```bash
+TARGET_DOMAIN=target.com docker-compose run --rm recon python /app/recon/main.py
+```
+
+3. **params.py (Fallback)** - Default values for CLI usage:
 ```python
 # recon/params.py
 TARGET_DOMAIN = "example.com"
@@ -187,8 +279,9 @@ SCAN_MODULES = ["domain_discovery", "port_scan", "http_probe"]
 USE_TOR = False
 ```
 
-Override with environment variables:
+**Other Modules** use `params.py` for configuration:
 ```bash
+# Override with environment variables
 TARGET_DOMAIN=target.com docker-compose run --rm recon python /app/recon/main.py
 ```
 

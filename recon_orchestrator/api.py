@@ -1,0 +1,245 @@
+"""
+Recon Orchestrator API - FastAPI service for managing recon containers
+"""
+import asyncio
+import json
+import logging
+import os
+from contextlib import asynccontextmanager
+from datetime import datetime
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from sse_starlette.sse import EventSourceResponse
+
+from container_manager import ContainerManager
+from models import (
+    HealthResponse,
+    ReconLogEvent,
+    ReconStartRequest,
+    ReconState,
+    ReconStatus,
+)
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# Configuration
+RECON_PATH = os.getenv("RECON_PATH", "/home/samuele/Progetti didattici/RedAmon/recon")
+RECON_IMAGE = os.getenv("RECON_IMAGE", "redamon-recon:latest")
+VERSION = "1.0.0"
+
+# Global container manager
+container_manager: ContainerManager = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize and cleanup resources"""
+    global container_manager
+    logger.info("Starting Recon Orchestrator...")
+    container_manager = ContainerManager(recon_image=RECON_IMAGE)
+    yield
+    logger.info("Shutting down Recon Orchestrator...")
+    await container_manager.cleanup()
+
+
+app = FastAPI(
+    title="RedAmon Recon Orchestrator",
+    description="Container orchestration service for recon processes",
+    version=VERSION,
+    lifespan=lifespan,
+)
+
+# CORS middleware for webapp access
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    """Health check endpoint"""
+    return HealthResponse(
+        status="healthy",
+        version=VERSION,
+        running_recons=container_manager.get_running_count() if container_manager else 0,
+    )
+
+
+@app.post("/recon/{project_id}/start", response_model=ReconState)
+async def start_recon(project_id: str, request: ReconStartRequest):
+    """
+    Start a new recon process for a project.
+
+    - Checks if recon is already running
+    - Starts new container with project settings from webapp API
+    - Returns current state
+    """
+    if not container_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    try:
+        state = await container_manager.start_recon(
+            project_id=project_id,
+            user_id=request.user_id,
+            webapp_api_url=request.webapp_api_url,
+            recon_path=RECON_PATH,
+        )
+        return state
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error starting recon: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/recon/{project_id}/status", response_model=ReconState)
+async def get_recon_status(project_id: str):
+    """Get current status of a recon process"""
+    if not container_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    return await container_manager.get_status(project_id)
+
+
+@app.post("/recon/{project_id}/stop", response_model=ReconState)
+async def stop_recon(project_id: str):
+    """Stop a running recon process"""
+    if not container_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    state = await container_manager.stop_recon(project_id)
+    return state
+
+
+@app.get("/recon/{project_id}/logs")
+async def stream_logs(project_id: str):
+    """
+    Stream logs from a recon container using Server-Sent Events.
+
+    Events are sent as JSON with format:
+    {
+        "log": "...",
+        "timestamp": "...",
+        "phase": "...",
+        "phase_number": 1,
+        "is_phase_start": false,
+        "level": "info"
+    }
+    """
+    if not container_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    # Check if there's a running container
+    state = await container_manager.get_status(project_id)
+    if state.status == ReconStatus.IDLE:
+        raise HTTPException(status_code=404, detail="No recon process found for this project")
+
+    async def event_generator():
+        """Generate SSE events from container logs"""
+        try:
+            async for event in container_manager.stream_logs(project_id):
+                yield {
+                    "event": "log",
+                    "data": json.dumps({
+                        "log": event.log,
+                        "timestamp": event.timestamp.isoformat(),
+                        "phase": event.phase,
+                        "phaseNumber": event.phase_number,
+                        "isPhaseStart": event.is_phase_start,
+                        "level": event.level,
+                    }),
+                }
+        except Exception as e:
+            logger.error(f"Error streaming logs: {e}")
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": str(e)}),
+            }
+
+        # Send completion event
+        final_state = await container_manager.get_status(project_id)
+        yield {
+            "event": "complete",
+            "data": json.dumps({
+                "status": final_state.status.value,
+                "completedAt": final_state.completed_at.isoformat() if final_state.completed_at else None,
+                "error": final_state.error,
+            }),
+        }
+
+    return EventSourceResponse(event_generator())
+
+
+@app.get("/recon/running")
+async def list_running():
+    """List all running recon processes"""
+    if not container_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    running = [
+        state for state in container_manager.running_states.values()
+        if state.status == ReconStatus.RUNNING
+    ]
+    return {"running": [s.dict() for s in running]}
+
+
+@app.delete("/recon/{project_id}/data")
+async def delete_recon_data(project_id: str):
+    """
+    Delete recon output data for a project.
+
+    This endpoint is called when a project is deleted to clean up
+    the associated JSON files.
+    """
+    import os
+    from pathlib import Path
+
+    # Build the path to the recon output file
+    # Inside the orchestrator container, the output is at /app/recon/output
+    output_dir = Path("/app/recon/output")
+    recon_file = output_dir / f"recon_{project_id}.json"
+
+    deleted_files = []
+    errors = []
+
+    # Delete recon JSON file
+    if recon_file.exists():
+        try:
+            os.remove(recon_file)
+            deleted_files.append(str(recon_file))
+            logger.info(f"Deleted recon file: {recon_file}")
+        except Exception as e:
+            errors.append(f"Failed to delete {recon_file}: {e}")
+            logger.error(f"Failed to delete recon file: {e}")
+
+    # Also clean up any running state for this project
+    if container_manager and project_id in container_manager.running_states:
+        del container_manager.running_states[project_id]
+
+    return {
+        "success": len(errors) == 0,
+        "deleted": deleted_files,
+        "errors": errors,
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "api:app",
+        host="0.0.0.0",
+        port=8010,
+        reload=True,
+        log_level="info",
+    )

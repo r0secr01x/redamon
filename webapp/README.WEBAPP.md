@@ -1,12 +1,13 @@
 # RedAmon Web Application
 
-Production-ready Next.js 16 web application with Neo4j integration, containerized with Docker for scalable AWS deployment.
+Production-ready Next.js 16 web application with Neo4j integration, PostgreSQL project storage, and integrated recon control.
 
 ## Tech Stack
 
 - **Framework**: Next.js 16.1 with App Router & Turbopack
 - **Runtime**: Node.js 22
-- **Database**: Neo4j 5.x (Graph Database)
+- **Graph Database**: Neo4j 5.x (attack surface data)
+- **Relational Database**: PostgreSQL 16 with Prisma ORM (project settings)
 - **Language**: TypeScript 5.7
 - **UI**: React 19.2
 - **Production**: Docker with multi-stage builds
@@ -15,17 +16,37 @@ Production-ready Next.js 16 web application with Neo4j integration, containerize
 
 ```
 webapp/
+├── prisma/
+│   └── schema.prisma          # Database schema (169+ project params)
 ├── src/
 │   ├── app/                    # Next.js App Router
 │   │   ├── api/               # API Routes
 │   │   │   ├── health/        # Health check endpoint
-│   │   │   └── neo4j/         # Neo4j query endpoint
+│   │   │   ├── neo4j/         # Neo4j query endpoint
+│   │   │   ├── projects/      # Project CRUD endpoints
+│   │   │   └── recon/         # Recon control endpoints
+│   │   │       └── [projectId]/
+│   │   │           ├── start/     # POST - Start recon
+│   │   │           ├── status/    # GET - Check status
+│   │   │           ├── logs/      # GET - SSE log stream
+│   │   │           └── download/  # GET - Download JSON
+│   │   ├── graph/             # Graph visualization page
+│   │   │   └── components/
+│   │   │       ├── GraphToolbar/      # Recon controls
+│   │   │       ├── ReconLogsDrawer/   # Real-time logs
+│   │   │       └── ReconConfirmModal/ # Confirmation dialog
 │   │   ├── layout.tsx         # Root layout
 │   │   ├── page.tsx           # Home page
 │   │   └── globals.css        # Global styles
 │   ├── components/            # React components
-│   └── lib/
-│       └── neo4j.ts           # Neo4j driver configuration
+│   ├── hooks/                 # Custom hooks
+│   │   ├── useReconStatus.ts  # Status polling
+│   │   └── useReconSSE.ts     # SSE log streaming
+│   ├── lib/
+│   │   ├── neo4j.ts           # Neo4j driver
+│   │   ├── prisma.ts          # Prisma client
+│   │   └── recon-types.ts     # TypeScript types
+│   └── providers/             # React context providers
 ├── public/                    # Static assets
 ├── Dockerfile                 # Production multi-stage build
 ├── docker-compose.yml         # Production compose
@@ -303,6 +324,84 @@ Content-Type: application/json
 }
 ```
 
+### Recon Control API
+
+The webapp provides endpoints to control reconnaissance scans via the Recon Orchestrator.
+
+#### Start Recon
+```
+POST /api/recon/[projectId]/start
+Content-Type: application/json
+
+{
+  "userId": "user-123"
+}
+```
+
+Starts a new recon scan for the specified project. The recon container will:
+1. Fetch project settings from `GET /api/projects/{projectId}`
+2. Execute the scan pipeline
+3. Stream logs in real-time
+4. Update Neo4j with results
+
+**Response:**
+```json
+{
+  "project_id": "project-123",
+  "status": "starting",
+  "container_id": "abc123...",
+  "started_at": "2024-01-15T10:30:00Z"
+}
+```
+
+#### Get Recon Status
+```
+GET /api/recon/[projectId]/status
+```
+
+Returns current recon status:
+```json
+{
+  "project_id": "project-123",
+  "status": "running",
+  "current_phase": "Port Scanning",
+  "phase_number": 2,
+  "total_phases": 7,
+  "started_at": "2024-01-15T10:30:00Z"
+}
+```
+
+**Status Values:** `idle`, `starting`, `running`, `completed`, `error`, `stopping`
+
+#### Stream Recon Logs (SSE)
+```
+GET /api/recon/[projectId]/logs
+Accept: text/event-stream
+```
+
+Server-Sent Events stream of real-time log output:
+```
+event: log
+data: {"log": "Starting port scan...", "timestamp": "...", "phase": "Port Scanning", "phaseNumber": 2, "level": "info"}
+
+event: complete
+data: {"status": "completed", "completedAt": "..."}
+```
+
+#### Stop Recon
+```
+POST /api/recon/[projectId]/stop
+```
+
+Gracefully stops a running recon container.
+
+#### Download Recon JSON
+```
+GET /api/recon/[projectId]/download
+```
+
+Downloads the recon output JSON file for the project.
+
 ---
 
 ## Environment Variables
@@ -312,8 +411,64 @@ Content-Type: application/json
 | `NEO4J_URI` | Neo4j connection URI | `bolt://localhost:7687` (dev) / `bolt://redamon-neo4j:7687` (Docker) |
 | `NEO4J_USER` | Neo4j username | `neo4j` |
 | `NEO4J_PASSWORD` | Neo4j password | (set in .env.local) |
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql://redamon:redamon_secret@localhost:5432/redamon` |
+| `RECON_ORCHESTRATOR_URL` | Recon orchestrator service URL | `http://localhost:8010` |
 | `NODE_ENV` | Environment mode | `development` |
 | `PORT` | Application port | `3000` |
+
+---
+
+## Recon Integration
+
+The webapp integrates with the Recon Orchestrator to provide real-time reconnaissance control.
+
+### React Hooks
+
+**useReconStatus** - Polls recon status with smart intervals:
+```typescript
+import { useReconStatus } from '@/hooks/useReconStatus'
+
+const { state, startRecon, stopRecon, isLoading, error } = useReconStatus({
+  projectId: 'project-123',
+  enabled: true,
+  onComplete: () => refetchGraph(),
+  onStatusChange: (status) => console.log('Status:', status)
+})
+```
+
+**useReconSSE** - Connects to real-time log stream:
+```typescript
+import { useReconSSE } from '@/hooks/useReconSSE'
+
+const { logs, currentPhase, currentPhaseNumber, isConnected, clearLogs } = useReconSSE({
+  projectId: 'project-123',
+  enabled: state?.status === 'running',
+  onPhaseChange: (phase, num) => console.log(`Phase ${num}: ${phase}`),
+  onComplete: (status) => console.log('Recon finished:', status)
+})
+```
+
+### Components
+
+| Component | Description |
+|-----------|-------------|
+| `GraphToolbar` | Contains Start Recon and Download JSON buttons |
+| `ReconConfirmModal` | Confirmation dialog before starting recon (warns about data replacement) |
+| `ReconLogsDrawer` | Slide-out panel showing real-time logs with phase progress |
+
+### Phase Detection
+
+The recon orchestrator automatically detects scan phases from log output:
+
+| Phase | Description |
+|-------|-------------|
+| 1 | Domain Discovery |
+| 2 | Port Scanning |
+| 3 | HTTP Probing |
+| 4 | Resource Enumeration |
+| 5 | Vulnerability Scanning |
+| 6 | MITRE Enrichment |
+| 7 | GitHub Secret Hunt |
 
 ---
 

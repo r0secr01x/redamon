@@ -6,38 +6,38 @@ Output is saved as structured JSON to the output folder.
 
 import json
 import time
-import sys
 import whois
-from typing import Any
+from typing import Any, Optional
 from datetime import datetime
 from pathlib import Path
-
-# Add project root to path for imports
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
-from recon.params import WHOIS_MAX_RETRIES
 
 # Output directory for JSON results
 OUTPUT_DIR = Path(__file__).parent / "output"
 
+# Default for WHOIS retries (used when no settings provided)
+DEFAULT_WHOIS_MAX_RETRIES = 6
 
-def get_whois_data(domain: str, max_retries: int = None):
+
+def get_whois_data(domain: str, max_retries: int = None, settings: Optional[dict] = None):
     """
     Get WHOIS information for a domain with retry logic.
-    
+
     Args:
         domain: The domain to lookup (e.g., "example.com")
-        max_retries: Maximum retry attempts (defaults to WHOIS_MAX_RETRIES from params)
-        
+        max_retries: Maximum retry attempts (overrides settings if provided)
+        settings: Settings dict from project_settings.get_settings()
+
     Returns:
         Tuple of (whois_result_dict_like_object, domain_string).
-        
+
     Raises:
         Exception: If WHOIS lookup fails after all retries.
     """
     if max_retries is None:
-        max_retries = WHOIS_MAX_RETRIES
+        if settings:
+            max_retries = settings.get('WHOIS_MAX_RETRIES', DEFAULT_WHOIS_MAX_RETRIES)
+        else:
+            max_retries = DEFAULT_WHOIS_MAX_RETRIES
     
     last_error = None
     
@@ -149,23 +149,24 @@ def save_json_report(data: dict, domain: str, output_dir: Path = OUTPUT_DIR) -> 
     return str(filepath)
 
 
-def whois_lookup(domain: str, save_output: bool = True) -> dict:
+def whois_lookup(domain: str, save_output: bool = True, settings: Optional[dict] = None) -> dict:
     """
     Main function to perform a WHOIS lookup and save results as JSON.
-    
+
     Args:
         domain: The domain to lookup (e.g., "example.com")
         save_output: Whether to save the JSON report to file.
-        
+        settings: Settings dict from project_settings.get_settings()
+
     Returns:
         Dictionary containing all WHOIS data with metadata.
     """
-    whois_result, domain = get_whois_data(domain)
+    whois_result, domain = get_whois_data(domain, settings=settings)
     result = whois_to_dict(whois_result, domain)
-    
+
     if save_output:
         filepath = save_json_report(result, domain)
         print(f"✓ WHOIS report saved to: {filepath}")
-    
+
     return result
 

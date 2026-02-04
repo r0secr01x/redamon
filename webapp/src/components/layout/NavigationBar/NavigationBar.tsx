@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Network, ShieldCheck, Target, ClipboardList } from 'lucide-react'
+import { Network, ShieldCheck, Target, ClipboardList, FolderOpen } from 'lucide-react'
 import styles from './NavigationBar.module.css'
 
 interface NavItem {
@@ -13,6 +13,12 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
+  {
+    label: 'Projects',
+    href: '/projects',
+    icon: <FolderOpen size={16} />,
+    enabled: true,
+  },
   {
     label: 'Graph Map',
     href: '/graph',

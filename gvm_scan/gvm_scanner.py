@@ -790,51 +790,51 @@ def extract_targets_from_recon(recon_data: Dict) -> Tuple[Set[str], Set[str]]:
     return ips, hostnames
 
 
-def load_recon_file(domain: str, recon_dir: Path = None) -> Dict:
+def load_recon_file(project_id: str, recon_dir: Path = None) -> Dict:
     """
-    Load recon JSON file for a domain.
-    
+    Load recon JSON file for a project.
+
     Args:
-        domain: Target domain
+        project_id: Project ID used in the filename
         recon_dir: Directory containing recon files
-        
+
     Returns:
         Recon data dictionary
     """
     if recon_dir is None:
         recon_dir = PROJECT_ROOT / "recon" / "output"
-    
-    recon_file = recon_dir / f"recon_{domain}.json"
-    
+
+    recon_file = recon_dir / f"recon_{project_id}.json"
+
     if not recon_file.exists():
         raise FileNotFoundError(f"Recon file not found: {recon_file}")
-    
+
     with open(recon_file, 'r') as f:
         return json.load(f)
 
 
 def save_vuln_results(
     results: Dict,
-    domain: str,
+    project_id: str,
     output_dir: Path = None
 ) -> Path:
     """
     Save vulnerability scan results to JSON file.
-    
+
     Args:
         results: Scan results dictionary
-        domain: Target domain
+        project_id: Project ID used in the filename
         output_dir: Output directory
-        
+
     Returns:
         Path to saved file
     """
     if output_dir is None:
         output_dir = PROJECT_ROOT / "gvm_scan" / "output"
-    
+
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_file = output_dir / f"gvm_{domain}.json"
-    
+    output_file = output_dir / f"gvm_{project_id}.json"
+
     with open(output_file, 'w') as f:
         json.dump(results, f, indent=2)
 

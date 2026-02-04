@@ -160,9 +160,23 @@ def lookup_cves_nvd(
 
     try:
         response = requests.get(NVD_API_URL, params=params, headers=headers, timeout=30)
+
+        # Handle rate limiting (NVD returns 403 or 429 when rate limited)
+        if response.status_code == 403:
+            print(f"        [!] NVD API rate limited. Add NVD_API_KEY env var for higher limits.")
+            return cves
+        if response.status_code == 404:
+            # 404 can occur with invalid CPE format or when service is unavailable
+            print(f"        [!] NVD API returned 404 for {product}. Skipping CVE lookup.")
+            return cves
+        if response.status_code == 429:
+            print(f"        [!] NVD API rate limited (429). Waiting...")
+            time.sleep(6)  # Wait 6 seconds and continue
+            return cves
+
         response.raise_for_status()
         data = response.json()
-        
+
         for vuln in data.get("vulnerabilities", []):
             cve_data = vuln.get("cve", {})
             cve_id = cve_data.get("id", "")
