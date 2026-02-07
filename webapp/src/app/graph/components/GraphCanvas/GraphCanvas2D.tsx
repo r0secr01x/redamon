@@ -117,11 +117,25 @@ export function GraphCanvas2D({
 
         // Draw selection marker (outer ring) for selected node
         if (isSelected) {
-          ctx.beginPath()
-          ctx.arc(graphNode.x, graphNode.y, nodeSize + 6, 0, 2 * Math.PI)
-          ctx.strokeStyle = SELECTION_COLORS.ring
-          ctx.lineWidth = 3
-          ctx.stroke()
+          if (graphNode.type === 'Exploit') {
+            // Diamond selection ring
+            const sd = nodeSize * 1.2 + 6
+            ctx.beginPath()
+            ctx.moveTo(graphNode.x, graphNode.y - sd)
+            ctx.lineTo(graphNode.x + sd, graphNode.y)
+            ctx.lineTo(graphNode.x, graphNode.y + sd)
+            ctx.lineTo(graphNode.x - sd, graphNode.y)
+            ctx.closePath()
+            ctx.strokeStyle = SELECTION_COLORS.ring
+            ctx.lineWidth = 3
+            ctx.stroke()
+          } else {
+            ctx.beginPath()
+            ctx.arc(graphNode.x, graphNode.y, nodeSize + 6, 0, 2 * Math.PI)
+            ctx.strokeStyle = SELECTION_COLORS.ring
+            ctx.lineWidth = 3
+            ctx.stroke()
+          }
         }
 
         // Check if this is a high/critical severity vulnerability or CVE
@@ -152,11 +166,37 @@ export function GraphCanvas2D({
           ctx.fill()
         }
 
-        // Draw main circle
-        ctx.beginPath()
-        ctx.arc(graphNode.x, graphNode.y, nodeSize, 0, 2 * Math.PI)
-        ctx.fillStyle = color
-        ctx.fill()
+        // Draw main shape
+        const isExploit = graphNode.type === 'Exploit'
+        if (isExploit) {
+          // Diamond shape for Exploit nodes (rotated square)
+          const d = nodeSize * 1.2 // diamond half-diagonal
+          ctx.beginPath()
+          ctx.moveTo(graphNode.x, graphNode.y - d)       // top
+          ctx.lineTo(graphNode.x + d, graphNode.y)       // right
+          ctx.lineTo(graphNode.x, graphNode.y + d)       // bottom
+          ctx.lineTo(graphNode.x - d, graphNode.y)       // left
+          ctx.closePath()
+          ctx.fillStyle = color.replace(')', ', 0.12)').replace('rgb(', 'rgba(')
+          ctx.fill()
+          ctx.strokeStyle = color
+          ctx.lineWidth = 1.5
+          ctx.stroke()
+
+          // Lightning bolt icon inside diamond
+          const iconSize = Math.max(d * 0.7, 4)
+          ctx.font = `${iconSize}px Sans-Serif`
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'middle'
+          ctx.fillStyle = color
+          ctx.fillText('\u26A1', graphNode.x, graphNode.y)
+        } else {
+          // Standard circle for all other nodes
+          ctx.beginPath()
+          ctx.arc(graphNode.x, graphNode.y, nodeSize, 0, 2 * Math.PI)
+          ctx.fillStyle = color
+          ctx.fill()
+        }
 
         // Draw label if enabled or if node is selected
         if ((showLabels && globalScale > ZOOM_CONFIG.labelVisibilityThreshold) || isSelected) {

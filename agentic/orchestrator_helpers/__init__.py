@@ -20,10 +20,9 @@ from .phase import (
     determine_phase_for_new_objective,
 )
 
-from .detection import (
-    detect_session_from_output,
-    detect_credentials_from_output,
-    update_target_with_detections,
+from .exploit_writer import (
+    create_exploit_node,
+    close_driver as close_exploit_writer_driver,
 )
 
 from .debug import (
@@ -51,10 +50,9 @@ __all__ = [
     # phase
     "classify_attack_path",
     "determine_phase_for_new_objective",
-    # detection
-    "detect_session_from_output",
-    "detect_credentials_from_output",
-    "update_target_with_detections",
+    # exploit_writer
+    "create_exploit_node",
+    "close_exploit_writer_driver",
     # debug
     "save_graph_image",
     # config

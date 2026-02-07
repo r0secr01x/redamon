@@ -150,18 +150,39 @@ export function GraphCanvas3D({
           group.add(glowRing)
         }
 
-        const geometry = new THREE.SphereGeometry(
-          sphereSize,
-          THREE_CONFIG.sphereSegments,
-          THREE_CONFIG.sphereSegments
-        )
-        const material = new THREE.MeshLambertMaterial({
-          color: nodeColor,
-          transparent: true,
-          opacity: THREE_CONFIG.nodeOpacity,
-        })
-        const sphere = new THREE.Mesh(geometry, material)
-        group.add(sphere)
+        // Use OctahedronGeometry (3D diamond) for Exploit nodes, SphereGeometry for all others
+        const isExploit = graphNode.type === 'Exploit'
+        const geometry = isExploit
+          ? new THREE.OctahedronGeometry(sphereSize * 1.2)
+          : new THREE.SphereGeometry(sphereSize, THREE_CONFIG.sphereSegments, THREE_CONFIG.sphereSegments)
+        const material = isExploit
+          ? new THREE.MeshLambertMaterial({
+              color: nodeColor,
+              transparent: true,
+              opacity: 0.12,
+              emissive: nodeColor,
+              emissiveIntensity: 0.3,
+              side: THREE.DoubleSide,
+            })
+          : new THREE.MeshLambertMaterial({
+              color: nodeColor,
+              transparent: true,
+              opacity: THREE_CONFIG.nodeOpacity,
+            })
+        const mesh = new THREE.Mesh(geometry, material)
+        group.add(mesh)
+
+        // Add wireframe overlay for Exploit nodes
+        if (isExploit) {
+          const wireMaterial = new THREE.MeshBasicMaterial({
+            color: nodeColor,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.6,
+          })
+          const wireMesh = new THREE.Mesh(geometry, wireMaterial)
+          group.add(wireMesh)
+        }
 
         // Create label if enabled or if node is selected
         if (showLabels || isSelected) {

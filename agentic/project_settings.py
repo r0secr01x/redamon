@@ -60,6 +60,7 @@ DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
         'execute_naabu': ['informational', 'exploitation', 'post_exploitation'],
         'metasploit_console': ['exploitation', 'post_exploitation'],
         'msf_restart': ['exploitation', 'post_exploitation'],
+        'web_search': ['informational', 'exploitation', 'post_exploitation'],
     },
 
     # Brute Force

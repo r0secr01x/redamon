@@ -602,6 +602,47 @@ HTTP response headers (all captured headers).
 
 ---
 
+### 19. Exploit
+
+**Label:** `Exploit`
+**Created by:** AI agent orchestrator (automatic, when exploitation succeeds)
+**Detection:** LLM-based analysis of tool output (`exploit_succeeded` field in `OutputAnalysis`)
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `id` | String | Deterministic ID for MERGE idempotency |
+| `user_id` | String | Tenant user ID |
+| `project_id` | String | Tenant project ID |
+| `attack_type` | String | `"cve_exploit"` or `"brute_force"` |
+| `severity` | String | Always `"critical"` |
+| `target_ip` | String | IP address of exploited target |
+| `target_port` | Integer | Port number targeted (optional) |
+| `cve_ids` | String[] | CVE IDs exploited (for cve_exploit) |
+| `metasploit_module` | String | Metasploit module used (optional) |
+| `payload` | String | Payload used (optional) |
+| `session_id` | Integer | Metasploit session ID (optional) |
+| `username` | String | Compromised username (for brute_force) |
+| `password` | String | Compromised password (for brute_force) |
+| `report` | String | Structured exploitation report |
+| `evidence` | String | LLM-provided evidence of success |
+| `commands_used` | String[] | Metasploit commands used |
+| `created_at` | DateTime | Node creation timestamp |
+
+**Relationships:**
+```cypher
+// CVE exploitation path
+(Exploit)-[:EXPLOITED_CVE]->(CVE)
+(Exploit)-[:TARGETED_IP]->(IP)
+
+// Brute force path
+(Exploit)-[:TARGETED_IP]->(IP)
+(Exploit)-[:VIA_PORT]->(Port)
+```
+
+**Visual:** Diamond shape (2D) / Octahedron (3D), amber color (#f59e0b), always-on glow, lightning bolt icon.
+
+---
+
 ---
 
 ## 🔗 Relationships

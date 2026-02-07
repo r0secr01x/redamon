@@ -73,6 +73,7 @@ class Neo4jClient:
             "CREATE CONSTRAINT mitredata_unique IF NOT EXISTS FOR (m:MitreData) REQUIRE m.id IS UNIQUE",
             "CREATE CONSTRAINT capec_unique IF NOT EXISTS FOR (cap:Capec) REQUIRE cap.capec_id IS UNIQUE",
             "CREATE CONSTRAINT vulnerability_unique IF NOT EXISTS FOR (v:Vulnerability) REQUIRE v.id IS UNIQUE",
+            "CREATE CONSTRAINT exploit_unique IF NOT EXISTS FOR (e:Exploit) REQUIRE e.id IS UNIQUE",
         ]
 
         # Tenant composite indexes
@@ -88,6 +89,7 @@ class Neo4jClient:
             "CREATE INDEX idx_endpoint_tenant IF NOT EXISTS FOR (e:Endpoint) ON (e.user_id, e.project_id)",
             "CREATE INDEX idx_parameter_tenant IF NOT EXISTS FOR (p:Parameter) ON (p.user_id, p.project_id)",
             "CREATE INDEX idx_vulnerability_tenant IF NOT EXISTS FOR (v:Vulnerability) ON (v.user_id, v.project_id)",
+            "CREATE INDEX idx_exploit_tenant IF NOT EXISTS FOR (e:Exploit) ON (e.user_id, e.project_id)",
         ]
 
         # Additional indexes
@@ -112,6 +114,8 @@ class Neo4jClient:
             # Capec indexes
             "CREATE INDEX capec_id IF NOT EXISTS FOR (c:Capec) ON (c.capec_id)",
             "CREATE INDEX idx_capec_tenant IF NOT EXISTS FOR (c:Capec) ON (c.user_id, c.project_id)",
+            # Exploit indexes
+            "CREATE INDEX idx_exploit_type IF NOT EXISTS FOR (e:Exploit) ON (e.attack_type)",
         ]
 
         for query in constraints + tenant_indexes + additional_indexes:

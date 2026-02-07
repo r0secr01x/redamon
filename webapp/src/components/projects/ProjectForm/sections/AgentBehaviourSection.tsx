@@ -46,6 +46,11 @@ export function AgentBehaviourSection({ data, updateField }: AgentBehaviourSecti
                   value={data.agentOpenaiModel}
                   onChange={(e) => updateField('agentOpenaiModel', e.target.value)}
                 >
+                  <optgroup label="Anthropic Claude">
+                    <option value="claude-opus-4-6">Claude Opus 4.6 — Most capable model</option>
+                    <option value="claude-sonnet-4-5-20250929">Claude Sonnet 4.5 — Balanced performance</option>
+                    <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 — Fast and efficient</option>
+                  </optgroup>
                   <optgroup label="GPT-5.2">
                     <option value="gpt-5.2">gpt-5.2 — Flagship reasoning model</option>
                     <option value="gpt-5.2-pro">gpt-5.2-pro — Smarter, more precise (Responses API)</option>
@@ -61,7 +66,7 @@ export function AgentBehaviourSection({ data, updateField }: AgentBehaviourSecti
                     <option value="gpt-4.1-nano">gpt-4.1-nano — Fastest, cheapest</option>
                   </optgroup>
                 </select>
-                <span className={styles.fieldHint}>Model used by the agent for reasoning and tool selection</span>
+                <span className={styles.fieldHint}>Model used by the agent. Anthropic models require ANTHROPIC_API_KEY in the agent .env file.</span>
               </div>
               <div className={styles.fieldGroup}>
                 <label className={styles.fieldLabel}>Post-Exploitation Type</label>
@@ -320,6 +325,7 @@ export function AgentBehaviourSection({ data, updateField }: AgentBehaviourSecti
               </div>
               {[
                 { id: 'query_graph', label: 'query_graph' },
+                { id: 'web_search', label: 'web_search' },
                 { id: 'execute_curl', label: 'execute_curl' },
                 { id: 'execute_naabu', label: 'execute_naabu' },
                 { id: 'metasploit_console', label: 'metasploit_console' },

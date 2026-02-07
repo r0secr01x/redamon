@@ -22,6 +22,9 @@ export const NODE_COLORS: Record<string, string> = {
   Endpoint: '#8b5cf6',       // Purple - Paths/routes
   Parameter: '#a855f7',      // Light purple - Inputs (attack surface)
 
+  // EXPLOITATION RESULTS (Amber) - Confirmed compromises
+  Exploit: '#f59e0b',        // Amber - Confirmed compromise
+
   // CONTEXT & METADATA (Neutral family) - Supporting information
   Technology: '#22c55e',     // Green - Tech stack (good to know)
   Certificate: '#d97706',    // Amber - TLS/security context

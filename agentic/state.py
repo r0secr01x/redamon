@@ -266,6 +266,9 @@ class OutputAnalysis(BaseModel):
     extracted_info: ExtractedTargetInfo = Field(default_factory=ExtractedTargetInfo)
     actionable_findings: List[str] = Field(default_factory=list)
     recommended_next_steps: List[str] = Field(default_factory=list)
+    # LLM-based exploit success detection
+    exploit_succeeded: bool = Field(default=False, description="True if this output indicates successful exploitation")
+    exploit_details: Optional[dict] = Field(default=None, description="Details about the successful exploit")
 
 
 class AttackPathClassification(BaseModel):

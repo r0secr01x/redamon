@@ -47,6 +47,9 @@ services:
       - NUCLEI_PORT=8002
       - METASPLOIT_PORT=8003
       - MSF_PROGRESS_PORT=8013
+      # Auto-update toggles (set to "false" for faster startup)
+      - MSF_AUTO_UPDATE=true
+      - NUCLEI_AUTO_UPDATE=true
     restart: unless-stopped
     # Health check
     healthcheck:
@@ -54,7 +57,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 180s
 
 networks:
   pentest-net:

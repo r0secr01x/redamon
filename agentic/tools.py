@@ -22,7 +22,7 @@ from project_settings import get_setting, is_tool_allowed_in_phase
 from prompts import TEXT_TO_CYPHER_SYSTEM
 
 if TYPE_CHECKING:
-    from langchain_openai import ChatOpenAI
+    from langchain_core.language_models import BaseChatModel
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +147,7 @@ class MCPToolsManager:
 class Neo4jToolManager:
     """Manages Neo4j graph query tool with tenant filtering."""
 
-    def __init__(self, uri: str, user: str, password: str, llm: "ChatOpenAI"):
+    def __init__(self, uri: str, user: str, password: str, llm: "BaseChatModel"):
         self.uri = uri
         self.user = user
         self.password = password
@@ -381,6 +381,91 @@ Cypher Query:"""
 
 
 # =============================================================================
+# WEB SEARCH TOOL MANAGER
+# =============================================================================
+
+class WebSearchToolManager:
+    """Manages Tavily web search tool for CVE research and exploit lookups."""
+
+    def __init__(self, api_key: str = None, max_results: int = 5):
+        self.api_key = api_key or os.environ.get('TAVILY_API_KEY', '')
+        self.max_results = max_results
+
+    def get_tool(self) -> Optional[callable]:
+        """
+        Set up and return the Tavily web search tool.
+
+        Returns:
+            The web_search tool function, or None if TAVILY_API_KEY is not set.
+        """
+        if not self.api_key:
+            logger.warning(
+                "TAVILY_API_KEY not set - web_search tool will not be available. "
+                "Set TAVILY_API_KEY environment variable to enable web search."
+            )
+            return None
+
+        manager = self
+
+        @tool
+        async def web_search(query: str) -> str:
+            """
+            Search the web for security research information.
+
+            Use this tool to research:
+            - CVE details, severity, affected versions, and patch information
+            - Exploit techniques, PoC code, and attack vectors
+            - Service/technology version-specific vulnerabilities
+            - Security advisories and vendor bulletins
+            - Metasploit module documentation and usage
+
+            This is a SECONDARY source - always check query_graph FIRST
+            for project-specific reconnaissance data.
+
+            Args:
+                query: Search query string (e.g., "CVE-2021-41773 exploit PoC")
+
+            Returns:
+                Search results with titles, URLs, and content snippets
+            """
+            try:
+                from langchain_tavily import TavilySearch
+
+                tavily_tool = TavilySearch(
+                    max_results=manager.max_results,
+                    topic="general",
+                    search_depth="advanced",
+                )
+
+                results = await tavily_tool.ainvoke({"query": query})
+
+                if isinstance(results, str):
+                    return results
+
+                if isinstance(results, list):
+                    formatted = []
+                    for i, result in enumerate(results, 1):
+                        title = result.get("title", "No title")
+                        url = result.get("url", "")
+                        content = result.get("content", "")
+                        formatted.append(
+                            f"[{i}] {title}\n    URL: {url}\n    {content}"
+                        )
+                    return "\n\n".join(formatted) if formatted else "No results found"
+
+                return str(results)
+
+            except ImportError:
+                return "Error: langchain-tavily package not installed. Run: pip install langchain-tavily"
+            except Exception as e:
+                logger.error(f"Web search failed: {e}")
+                return f"Web search error: {str(e)}"
+
+        logger.info("Tavily web search tool configured")
+        return web_search
+
+
+# =============================================================================
 # PHASE-AWARE TOOL EXECUTOR
 # =============================================================================
 
@@ -390,14 +475,24 @@ class PhaseAwareToolExecutor:
     Validates that tools are allowed in the current phase before execution.
     """
 
-    def __init__(self, mcp_manager: MCPToolsManager, graph_tool: Optional[callable]):
+    def __init__(
+        self,
+        mcp_manager: MCPToolsManager,
+        graph_tool: Optional[callable],
+        web_search_tool: Optional[callable] = None,
+    ):
         self.mcp_manager = mcp_manager
         self.graph_tool = graph_tool
+        self.web_search_tool = web_search_tool
         self._all_tools: Dict[str, callable] = {}
 
         # Register graph tool
         if graph_tool:
             self._all_tools["query_graph"] = graph_tool
+
+        # Register web search tool
+        if web_search_tool:
+            self._all_tools["web_search"] = web_search_tool
 
     def register_mcp_tools(self, tools: List) -> None:
         """Register MCP tools after they're loaded."""
@@ -491,6 +586,10 @@ class PhaseAwareToolExecutor:
                 # Graph tool expects 'question' argument
                 question = tool_args.get("question", "")
                 output = await tool.ainvoke(question)
+            elif tool_name == "web_search":
+                # Web search tool expects 'query' argument
+                query = tool_args.get("query", "")
+                output = await tool.ainvoke(query)
             else:
                 # MCP tools - invoke with the appropriate argument
                 output = await tool.ainvoke(tool_args)

@@ -7,6 +7,7 @@ Supports session-based conversation continuity and phase-based approval flow.
 Endpoints:
     WS /ws/agent - WebSocket endpoint for real-time bidirectional streaming
     GET /health - Health check
+    GET /defaults - Agent default settings (camelCase, for frontend)
 """
 
 import logging
@@ -110,6 +111,31 @@ async def health():
         tools_loaded=tools_count,
         active_sessions=sessions_count
     )
+
+
+@app.get("/defaults", tags=["System"])
+async def get_defaults():
+    """
+    Get default agent settings for frontend project creation.
+
+    Returns DEFAULT_AGENT_SETTINGS with camelCase keys prefixed with 'agent'
+    for frontend compatibility (e.g., OPENAI_MODEL -> agentOpenaiModel).
+    """
+    from project_settings import DEFAULT_AGENT_SETTINGS
+
+    def to_camel_case(snake_str: str) -> str:
+        """Convert SCREAMING_SNAKE_CASE to agentCamelCase."""
+        # Prefix with 'agent_' then convert to camelCase
+        prefixed = f"agent_{snake_str}"
+        components = prefixed.lower().split('_')
+        return components[0] + ''.join(x.title() for x in components[1:])
+
+    camel_case_defaults = {
+        to_camel_case(k): v
+        for k, v in DEFAULT_AGENT_SETTINGS.items()
+    }
+
+    return camel_case_defaults
 
 
 @app.websocket("/ws/agent")

@@ -7,6 +7,7 @@ export const NODE_SIZES: Record<string, number> = {
   Service: 2,
   BaseURL: 3,
   Technology: 2,
+  Exploit: 2.5, // Largest node - confirmed compromise (diamond shape)
   Default: 1,
 }
 

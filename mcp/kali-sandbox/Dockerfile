@@ -66,6 +66,10 @@ RUN mkdir -p /opt/mcp_servers /opt/output
 # Copy MCP servers
 COPY servers/ /opt/mcp_servers/
 
+# Copy and set entrypoint script
+COPY kali-sandbox/entrypoint.sh /opt/entrypoint.sh
+RUN chmod +x /opt/entrypoint.sh
+
 WORKDIR /opt/mcp_servers
 
 # Expose ports for MCP servers (SSE/HTTP transport)
@@ -74,5 +78,5 @@ EXPOSE 8000 8001 8002 8003
 # Initialize Metasploit database (speeds up first run)
 RUN msfdb init || true
 
-# Default command - run all MCP servers
-CMD ["python3", "run_servers.py"]
+# Entrypoint handles updates + launches MCP servers
+ENTRYPOINT ["/opt/entrypoint.sh"]

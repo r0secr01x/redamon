@@ -99,8 +99,8 @@ COPY graph_db/ /app/graph_db/
 COPY recon/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
-# Create volume mount points
-VOLUME ["/app/recon/output", "/var/run/docker.sock", "/data"]
+# Create volume mount points (NOT /app/recon/output - that's bind-mounted by the orchestrator)
+VOLUME ["/var/run/docker.sock", "/data"]
 
 # Expose Tor SOCKS port (if using container's Tor)
 EXPOSE 9050

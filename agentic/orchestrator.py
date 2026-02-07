@@ -12,6 +12,8 @@ from typing import Optional
 from dotenv import load_dotenv
 
 from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -40,6 +42,7 @@ from project_settings import get_setting
 from tools import (
     MCPToolsManager,
     Neo4jToolManager,
+    WebSearchToolManager,
     PhaseAwareToolExecutor,
     set_tenant_context,
     set_phase_context,
@@ -59,7 +62,6 @@ from orchestrator_helpers import (
     parse_analysis_response,
     classify_attack_path,
     determine_phase_for_new_objective,
-    update_target_with_detections,
     save_graph_image,
     set_checkpointer,
     create_config,
@@ -91,11 +93,12 @@ class AgentOrchestrator:
         """Initialize the orchestrator with configuration."""
         self.model_name = get_setting('OPENAI_MODEL', 'gpt-5.2')
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
         self.neo4j_uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
         self.neo4j_user = os.getenv("NEO4J_USER", "neo4j")
         self.neo4j_password = os.getenv("NEO4J_PASSWORD")
 
-        self.llm: Optional[ChatOpenAI] = None
+        self.llm: Optional[BaseChatModel] = None
         self.tool_executor: Optional[PhaseAwareToolExecutor] = None
         self.graph = None
 
@@ -121,13 +124,32 @@ class AgentOrchestrator:
         logger.info("AgentOrchestrator initialized with ReAct pattern")
 
     def _setup_llm(self) -> None:
-        """Initialize the OpenAI LLM."""
+        """Initialize the LLM based on model name (OpenAI or Anthropic)."""
         logger.info(f"Setting up LLM: {self.model_name}")
-        self.llm = ChatOpenAI(
-            model=self.model_name,
-            api_key=self.openai_api_key,
-            temperature=0
-        )
+
+        if self.model_name.startswith("claude-"):
+            if not self.anthropic_api_key:
+                raise ValueError(
+                    f"ANTHROPIC_API_KEY environment variable is required for model '{self.model_name}'"
+                )
+            self.llm = ChatAnthropic(
+                model=self.model_name,
+                api_key=self.anthropic_api_key,
+                temperature=0,
+                max_tokens=4096,
+            )
+        else:
+            if not self.openai_api_key:
+                raise ValueError(
+                    f"OPENAI_API_KEY environment variable is required for model '{self.model_name}'"
+                )
+            self.llm = ChatOpenAI(
+                model=self.model_name,
+                api_key=self.openai_api_key,
+                temperature=0,
+            )
+
+        logger.info(f"LLM provider: {'Anthropic' if self.model_name.startswith('claude-') else 'OpenAI'}")
 
     async def _setup_tools(self) -> None:
         """Set up all tools (MCP and Neo4j)."""
@@ -144,8 +166,12 @@ class AgentOrchestrator:
         )
         graph_tool = neo4j_manager.get_tool()
 
+        # Setup Tavily web search tool
+        web_search_manager = WebSearchToolManager()
+        web_search_tool = web_search_manager.get_tool()
+
         # Create phase-aware tool executor
-        self.tool_executor = PhaseAwareToolExecutor(mcp_manager, graph_tool)
+        self.tool_executor = PhaseAwareToolExecutor(mcp_manager, graph_tool, web_search_tool)
         self.tool_executor.register_mcp_tools(mcp_tools)
 
         logger.info(f"Tools initialized: {len(self.tool_executor.get_all_tools())} available")
@@ -920,15 +946,27 @@ class AgentOrchestrator:
         )
         merged_target = current_target.merge_from(new_target)
 
-        # Detect sessions and credentials from tool output
-        merged_target = update_target_with_detections(
-            merged_target,
-            tool_output,
-            phase,
-            state.get("attack_path_type", "cve_exploit"),
-            get_setting('POST_EXPL_PHASE_TYPE', 'statefull'),
-            user_id, project_id, session_id
-        )
+        # LLM-based exploit success detection (primary detection — covers all exploit types)
+        if analysis.exploit_succeeded and analysis.exploit_details and phase == "exploitation":
+            details = analysis.exploit_details
+            try:
+                from orchestrator_helpers.exploit_writer import create_exploit_node
+                create_exploit_node(
+                    self.neo4j_uri, self.neo4j_user, self.neo4j_password,
+                    user_id, project_id,
+                    attack_type=details.get("attack_type", state.get("attack_path_type", "cve_exploit")),
+                    target_ip=details.get("target_ip", merged_target.primary_target),
+                    target_port=details.get("target_port"),
+                    cve_ids=details.get("cve_ids", merged_target.vulnerabilities),
+                    session_id=details.get("session_id"),
+                    username=details.get("username"),
+                    password=details.get("password"),
+                    evidence=details.get("evidence", ""),
+                    execution_trace=state.get("execution_trace", []),
+                )
+                logger.info(f"[{user_id}/{project_id}/{session_id}] LLM detected exploit success - Exploit node created")
+            except Exception as e:
+                logger.error(f"[{user_id}/{project_id}/{session_id}] Failed to create Exploit node from LLM detection: {e}")
 
         # Add step to execution trace
         execution_trace = state.get("execution_trace", []) + [step_data]

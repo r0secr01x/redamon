@@ -92,13 +92,13 @@ def get_phase_tools(
 
     # Determine allowed tools for current phase
     if phase == "informational":
-        allowed_tools = "query_graph, execute_curl, execute_naabu"
+        allowed_tools = "query_graph, web_search, execute_curl, execute_naabu"
     elif phase == "exploitation":
-        allowed_tools = "query_graph, execute_curl, execute_naabu, metasploit_console"
+        allowed_tools = "query_graph, web_search, execute_curl, execute_naabu, metasploit_console"
     elif phase == "post_exploitation":
-        allowed_tools = "query_graph, execute_curl, execute_naabu, metasploit_console"
+        allowed_tools = "query_graph, web_search, execute_curl, execute_naabu, metasploit_console"
     else:
-        allowed_tools = "query_graph, execute_curl, execute_naabu"
+        allowed_tools = "query_graph, web_search, execute_curl, execute_naabu"
 
     # Add tool availability matrix (concise, no redundancy)
     parts.append(TOOL_AVAILABILITY.format(phase=phase, allowed_tools=allowed_tools))

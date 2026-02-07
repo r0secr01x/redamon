@@ -17,14 +17,16 @@ TOOL_AVAILABILITY = """
 | Tool                | Purpose                      | When to Use                                    | Phase Availability          |
 |---------------------|------------------------------|------------------------------------------------|-----------------------------|
 | **query_graph**     | Neo4j database queries       | PRIMARY - Always check graph first             | All phases                  |
-| **execute_curl**    | HTTP reachability checks     | ONLY verify host/IP is reachable (NOT for vuln testing) | All phases                  |
+| **web_search**      | Web search (Tavily)          | Research CVEs, exploits, service vulns          | All phases                 |
+| **execute_curl**    | HTTP reachability checks     | ONLY verify host/IP is reachable (NOT for vuln testing) | All phases         |
 | **execute_naabu**   | Port scanning                | ONLY to verify ports or scan new targets       | All phases                  |
 | **metasploit_console** | Exploit execution         | Execute exploits, manage sessions              | Exploitation, Post-Expl     |
 
 **Tool Selection Priority:**
 1. **query_graph** FIRST - Check existing reconnaissance data (includes vulnerabilities!)
-2. **Auxiliary tools** (curl/naabu) - ONLY for basic reachability/port verification
-3. **metasploit_console** - Use in exploitation phase for actual vulnerability testing
+2. **web_search** - Research CVE details, exploit PoCs, service-specific vulnerabilities from the web
+3. **Auxiliary tools** (curl/naabu) - ONLY for basic reachability/port verification
+4. **metasploit_console** - Use in exploitation phase for actual vulnerability testing
 
 **Current phase allows:** {allowed_tools}
 """
@@ -60,14 +62,24 @@ INFORMATIONAL_TOOLS = """
    - Example: "What ports are open on 10.0.0.5?"
    - Example: "What technologies are running on the target?"
 
-2. **execute_curl** (Auxiliary - REACHABILITY ONLY)
+2. **web_search** (SECONDARY - Research from the web)
+   - Search the internet for security research information via Tavily
+   - Use AFTER query_graph when you need external context not in the graph
+   - **USE FOR:** CVE details, exploit PoCs, version-specific vulnerabilities, attack techniques
+   - **USE FOR:** Metasploit module documentation, security advisories, vendor bulletins
+   - **DO NOT USE AS:** A replacement for query_graph (graph has project-specific recon data)
+   - Example args: "CVE-2021-41773 Apache path traversal exploit PoC"
+   - Example args: "Apache 2.4.49 known vulnerabilities"
+   - Example args: "Metasploit module for CVE-2021-44228 log4shell"
+
+3. **execute_curl** (Auxiliary - REACHABILITY ONLY)
    - Make HTTP requests to check if target is reachable
    - **ONLY USE FOR:** Basic reachability checks (status code, headers)
    - **NEVER USE FOR:** Vulnerability testing, exploit probing, path traversal, LFI/RFI checks
    - Example args: "-s -I http://target.com" (check if site is up, get basic headers)
    - Example args: "-s http://target.com" (verify service responds)
 
-3. **execute_naabu** (Auxiliary - for verification)
+4. **execute_naabu** (Auxiliary - for verification)
    - Fast port scanner for verification
    - Use ONLY to verify ports are actually open or scan new targets not in graph
    - Example args: "-host 10.0.0.5 -p 80,443,8080 -json"
@@ -251,7 +263,7 @@ Based on the context above, decide your next action. You MUST output valid JSON:
     "thought": "Your analysis of the current situation and what needs to be done next",
     "reasoning": "Why you chose this specific action over alternatives",
     "action": "<one of: use_tool, transition_phase, complete, ask_user>",
-    "tool_name": "<only if action=use_tool: query_graph, execute_curl, execute_naabu, or metasploit_console>",
+    "tool_name": "<only if action=use_tool: query_graph, web_search, execute_curl, execute_naabu, or metasploit_console>",
     "tool_args": "<only if action=use_tool: {{'question': '...'}} or {{'args': '...'}} or {{'command': '...'}}",
     "phase_transition": "<only if action=transition_phase>",
     "user_question": "<only if action=ask_user>",
@@ -364,6 +376,7 @@ Objective 1: "Scan 192.168.1.1 for open ports"
 
 ### Tool Arguments:
 - query_graph: {{"question": "natural language question about the graph data"}}
+- web_search: {{"query": "search query for CVE details, exploit techniques, etc."}}
 - execute_curl: {{"args": "curl command arguments without 'curl' prefix"}}
 - execute_naabu: {{"args": "naabu arguments without 'naabu' prefix"}}
 - metasploit_console: {{"command": "msfconsole command to execute"}}
@@ -424,6 +437,18 @@ OUTPUT_ANALYSIS_PROMPT = """Analyze the tool output and extract relevant informa
 1. Interpret what this output means for the penetration test
 2. Extract any new information to add to target intelligence
 3. Identify actionable findings
+4. **Exploit Success Detection**: Determine if this output shows that exploitation SUCCEEDED.
+   Set `exploit_succeeded: true` if you see ANY of these:
+   - A Metasploit session was opened (e.g., "Meterpreter session 1 opened", "Command shell session 1 opened")
+   - Brute force credentials were found (e.g., "[+] Success: 'root:toor'", "[+] Login Successful: user:pass")
+   - A stateless exploit returned meaningful output proving compromise (e.g., file contents from path traversal like /etc/passwd, command output from RCE like "uid=0(root)", database dumps, sensitive data)
+   - Any clear evidence the target was compromised
+
+   Do NOT set `exploit_succeeded: true` for:
+   - Partial progress (e.g., "Sending stage..." without "session opened")
+   - Failed attempts (e.g., "Exploit completed, but no session was created")
+   - Information gathering (e.g., port scans, version detection, service enumeration)
+   - Module configuration output (e.g., "set RHOSTS", "show options")
 
 Output valid JSON:
 ```json
@@ -445,11 +470,27 @@ Output valid JSON:
     "recommended_next_steps": [
         "Suggested next action 1",
         "Suggested next action 2"
-    ]
+    ],
+    "exploit_succeeded": false,
+    "exploit_details": null
 }}
 ```
 
 Only include fields in extracted_info that have new information.
+
+When `exploit_succeeded` is true, fill `exploit_details` with:
+```json
+{{
+    "attack_type": "cve_exploit or brute_force",
+    "target_ip": "IP address of the compromised target",
+    "target_port": 80,
+    "cve_ids": ["CVE-2021-41773"],
+    "username": "compromised username or null",
+    "password": "compromised password or null",
+    "session_id": 1,
+    "evidence": "Brief description of what proves the exploit worked"
+}}
+```
 """
 
 

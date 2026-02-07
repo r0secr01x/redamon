@@ -49,6 +49,8 @@ export const getNodeSize = (node: GraphNode): number => {
  * Returns: false, 'high', or 'critical'
  */
 export const getGlowLevel = (node: GraphNode): GlowLevel => {
+  // Exploit nodes always glow (confirmed compromise)
+  if (node.type === 'Exploit') return 'critical'
   if (node.type === 'Vulnerability' || node.type === 'CVE') {
     const severity = getNodeSeverity(node)
     if (severity === 'critical') return 'critical'
@@ -61,6 +63,8 @@ export const getGlowLevel = (node: GraphNode): GlowLevel => {
  * Check if a node is a high-severity vulnerability or CVE
  */
 export const isHighSeverityNode = (node: GraphNode): boolean => {
+  // Exploit nodes are always high-severity (confirmed compromise)
+  if (node.type === 'Exploit') return true
   if (node.type !== 'Vulnerability' && node.type !== 'CVE') return false
   const severity = getNodeSeverity(node)
   return severity === 'critical' || severity === 'high'

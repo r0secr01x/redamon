@@ -104,6 +104,24 @@ export async function GET(request: NextRequest) {
       // Get TLS Certificates linked to BaseURLs
       MATCH (u:BaseURL {project_id: $projectId})-[r12:HAS_CERTIFICATE]->(c:Certificate)
       RETURN u as n, r12 as r, c as m
+
+      UNION
+
+      // Get Exploit nodes linked to IPs
+      MATCH (e:Exploit {project_id: $projectId})-[r13:TARGETED_IP]->(ip:IP)
+      RETURN e as n, r13 as r, ip as m
+
+      UNION
+
+      // Get Exploit nodes linked to CVEs
+      MATCH (e:Exploit {project_id: $projectId})-[r14:EXPLOITED_CVE]->(c:CVE)
+      RETURN e as n, r14 as r, c as m
+
+      UNION
+
+      // Get Exploit nodes linked to Ports (brute force)
+      MATCH (e:Exploit {project_id: $projectId})-[r15:VIA_PORT]->(p:Port)
+      RETURN e as n, r15 as r, p as m
       `,
       { projectId }
     )
@@ -319,6 +337,17 @@ function getNodeName(node: Neo4jNode): string {
     if (paramName) {
       return paramName
     }
+  }
+
+  // Special handling for Exploit nodes - show attack type and target
+  if (label === 'Exploit') {
+    const attackType = props.attack_type as string || ''
+    const targetIp = props.target_ip as string || ''
+    if (attackType === 'cve_exploit') {
+      const cves = props.cve_ids as string[] || []
+      return `EXPLOITED\n${cves[0] || ''}\n${targetIp}`
+    }
+    return `EXPLOITED\n${props.username || ''}@${targetIp}`
   }
 
   // Special handling for Vulnerability nodes - show name and severity
