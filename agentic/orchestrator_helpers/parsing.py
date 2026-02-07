@@ -3,6 +3,7 @@
 import json
 import re
 import logging
+from typing import Optional, Tuple
 
 from state import LLMDecision, OutputAnalysis, ExtractedTargetInfo
 from .json_utils import extract_json
@@ -10,28 +11,102 @@ from .json_utils import extract_json
 logger = logging.getLogger(__name__)
 
 
-def parse_llm_decision(response_text: str) -> LLMDecision:
-    """Parse LLM decision from JSON response using Pydantic validation."""
+def _normalize_extracted_info(extracted: dict) -> None:
+    """
+    Normalize extracted_info fields in-place so they match ExtractedTargetInfo schema.
+
+    Handles common LLM deviations:
+    - services: List[str] but LLM may return List[dict] with service_name/port/protocol keys
+    - sessions: List[int] but LLM may return List[str] like "Session 1 opened..."
+    """
+    # Normalize services: convert dicts to strings
+    if "services" in extracted and isinstance(extracted["services"], list):
+        normalized = []
+        for item in extracted["services"]:
+            if isinstance(item, str):
+                normalized.append(item)
+            elif isinstance(item, dict):
+                # Extract service name, optionally with port/protocol
+                name = item.get("service_name") or item.get("name") or item.get("service") or ""
+                port = item.get("port")
+                protocol = item.get("protocol")
+                if name and port:
+                    normalized.append(f"{name}/{port}/{protocol}" if protocol else f"{name}/{port}")
+                elif name:
+                    normalized.append(name)
+                else:
+                    normalized.append(str(item))
+            else:
+                normalized.append(str(item))
+        extracted["services"] = normalized
+
+    # Normalize sessions: extract ints from strings
+    if "sessions" in extracted and isinstance(extracted["sessions"], list):
+        parsed_sessions = []
+        for item in extracted["sessions"]:
+            if isinstance(item, int):
+                parsed_sessions.append(item)
+            elif isinstance(item, str):
+                match = re.search(r'[Ss]ession\s+(\d+)', item)
+                if match:
+                    parsed_sessions.append(int(match.group(1)))
+                else:
+                    try:
+                        parsed_sessions.append(int(item))
+                    except ValueError:
+                        pass
+        extracted["sessions"] = parsed_sessions
+
+
+def try_parse_llm_decision(response_text: str) -> Tuple[Optional[LLMDecision], Optional[str]]:
+    """
+    Attempt to parse LLM decision from JSON response.
+
+    Returns:
+        (decision, None) on success, or (None, error_message) on failure.
+    """
     try:
         json_str = extract_json(response_text)
-        if json_str:
-            # Pre-process JSON to handle empty nested objects that would fail validation
-            # LLM sometimes outputs empty objects like user_question: {} or phase_transition: {}
-            data = json.loads(json_str)
+        if not json_str:
+            return None, "No JSON object found in response"
 
-            # Remove empty user_question object (would fail validation due to required fields)
-            if "user_question" in data and (not data["user_question"] or data["user_question"] == {}):
-                data["user_question"] = None
+        # Pre-process JSON to handle empty nested objects that would fail validation
+        # LLM sometimes outputs empty objects like user_question: {} or phase_transition: {}
+        data = json.loads(json_str)
 
-            # Remove empty phase_transition object
-            if "phase_transition" in data and (not data["phase_transition"] or data["phase_transition"] == {}):
-                data["phase_transition"] = None
+        # Remove empty user_question object (would fail validation due to required fields)
+        if "user_question" in data and (not data["user_question"] or data["user_question"] == {}):
+            data["user_question"] = None
 
-            return LLMDecision.model_validate(data)
+        # Remove empty phase_transition object
+        if "phase_transition" in data and (not data["phase_transition"] or data["phase_transition"] == {}):
+            data["phase_transition"] = None
+
+        # Handle empty output_analysis object
+        if "output_analysis" in data and (not data["output_analysis"] or data["output_analysis"] == {}):
+            data["output_analysis"] = None
+
+        # Pre-process extracted_info fields in output_analysis (same as parse_analysis_response)
+        if (data.get("output_analysis") and
+                isinstance(data["output_analysis"], dict) and
+                "extracted_info" in data["output_analysis"]):
+            extracted = data["output_analysis"]["extracted_info"]
+            _normalize_extracted_info(extracted)
+
+        return LLMDecision.model_validate(data), None
+    except json.JSONDecodeError as e:
+        return None, f"Invalid JSON: {e}"
     except Exception as e:
-        logger.warning(f"Failed to parse LLM decision: {e}")
+        return None, f"Validation error: {e}"
 
-    # Fallback - return a completion action with error context
+
+def parse_llm_decision(response_text: str) -> LLMDecision:
+    """Parse LLM decision from JSON response (backward-compatible wrapper)."""
+    decision, error = try_parse_llm_decision(response_text)
+    if decision:
+        return decision
+
+    logger.warning(f"Failed to parse LLM decision: {error}")
     return LLMDecision(
         thought=response_text,
         reasoning="Failed to parse structured response",
@@ -48,25 +123,9 @@ def parse_analysis_response(response_text: str) -> OutputAnalysis:
         if json_str:
             data = json.loads(json_str)
 
-            # Pre-process sessions field to extract integers from strings
-            # LLM sometimes returns session descriptions like "Meterpreter session 1 opened..."
-            if "extracted_info" in data and "sessions" in data["extracted_info"]:
-                sessions = data["extracted_info"]["sessions"]
-                parsed_sessions = []
-                for item in sessions:
-                    if isinstance(item, int):
-                        parsed_sessions.append(item)
-                    elif isinstance(item, str):
-                        # Extract session ID from strings like "Meterpreter session 1 opened..."
-                        match = re.search(r'[Ss]ession\s+(\d+)', item)
-                        if match:
-                            parsed_sessions.append(int(match.group(1)))
-                        else:
-                            try:
-                                parsed_sessions.append(int(item))
-                            except ValueError:
-                                pass
-                data["extracted_info"]["sessions"] = parsed_sessions
+            # Normalize extracted_info fields (services, sessions, etc.)
+            if "extracted_info" in data and isinstance(data["extracted_info"], dict):
+                _normalize_extracted_info(data["extracted_info"])
 
             return OutputAnalysis.model_validate(data)
     except Exception as e:

@@ -12,6 +12,7 @@ from .json_utils import (
 
 from .parsing import (
     parse_llm_decision,
+    try_parse_llm_decision,
     parse_analysis_response,
 )
 
@@ -46,6 +47,7 @@ __all__ = [
     "extract_json",
     # parsing
     "parse_llm_decision",
+    "try_parse_llm_decision",
     "parse_analysis_response",
     # phase
     "classify_attack_path",

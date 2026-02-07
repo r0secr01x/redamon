@@ -180,6 +180,53 @@ export async function GET(request: NextRequest) {
   }
 }
 
+export async function DELETE(request: NextRequest) {
+  const searchParams = request.nextUrl.searchParams
+  const nodeId = searchParams.get('nodeId')
+  const projectId = searchParams.get('projectId')
+
+  if (!nodeId || !projectId) {
+    return NextResponse.json(
+      { error: 'nodeId and projectId are required' },
+      { status: 400 }
+    )
+  }
+
+  const session = getSession()
+
+  try {
+    // Only delete Exploit nodes — safety check via label
+    const result = await session.run(
+      `
+      MATCH (n:Exploit)
+      WHERE id(n) = toInteger($nodeId) AND n.project_id = $projectId
+      DETACH DELETE n
+      RETURN count(n) as deleted
+      `,
+      { nodeId, projectId }
+    )
+
+    const deleted = result.records[0]?.get('deleted')?.low ?? 0
+
+    if (deleted === 0) {
+      return NextResponse.json(
+        { error: 'Exploit node not found' },
+        { status: 404 }
+      )
+    }
+
+    return NextResponse.json({ success: true, deleted })
+  } catch (error) {
+    console.error('Graph delete error:', error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Delete failed' },
+      { status: 500 }
+    )
+  } finally {
+    await session.close()
+  }
+}
+
 function getNodeName(node: Neo4jNode): string {
   const props = node.properties
   const label = node.labels[0]

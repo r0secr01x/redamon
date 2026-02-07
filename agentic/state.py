@@ -218,11 +218,33 @@ class TodoItemUpdate(BaseModel):
     priority: Priority = "medium"
 
 
+class ExtractedTargetInfo(BaseModel):
+    """Target information extracted from tool output analysis."""
+    primary_target: Optional[str] = None
+    ports: List[int] = Field(default_factory=list)
+    services: List[str] = Field(default_factory=list)
+    technologies: List[str] = Field(default_factory=list)
+    vulnerabilities: List[str] = Field(default_factory=list)
+    credentials: List[dict] = Field(default_factory=list)
+    sessions: List[int] = Field(default_factory=list)
+
+
+class OutputAnalysisInline(BaseModel):
+    """Inline output analysis embedded in LLMDecision when tool output is pending."""
+    interpretation: str = ""
+    extracted_info: ExtractedTargetInfo = Field(default_factory=ExtractedTargetInfo)
+    actionable_findings: List[str] = Field(default_factory=list)
+    recommended_next_steps: List[str] = Field(default_factory=list)
+    exploit_succeeded: bool = False
+    exploit_details: Optional[dict] = None
+
+
 class LLMDecision(BaseModel):
     """
     Structured response from the ReAct think node.
 
     The LLM outputs JSON matching this schema to decide its next action.
+    When tool output is pending, also includes output_analysis.
     """
     thought: str = Field(description="Analysis of current situation")
     reasoning: str = Field(description="Why this action was chosen")
@@ -244,16 +266,8 @@ class LLMDecision(BaseModel):
     # Todo list updates (always present)
     updated_todo_list: List[TodoItemUpdate] = Field(default_factory=list)
 
-
-class ExtractedTargetInfo(BaseModel):
-    """Target information extracted from tool output analysis."""
-    primary_target: Optional[str] = None
-    ports: List[int] = Field(default_factory=list)
-    services: List[str] = Field(default_factory=list)
-    technologies: List[str] = Field(default_factory=list)
-    vulnerabilities: List[str] = Field(default_factory=list)
-    credentials: List[dict] = Field(default_factory=list)
-    sessions: List[int] = Field(default_factory=list)
+    # Output analysis (only present when analyzing previous tool output)
+    output_analysis: Optional[OutputAnalysisInline] = Field(default=None)
 
 
 class OutputAnalysis(BaseModel):
@@ -359,6 +373,7 @@ class AgentState(TypedDict):
 
     # Internal fields for inter-node communication (not persisted long-term)
     _current_step: Optional[dict]  # Current ExecutionStep being processed
+    _completed_step: Optional[dict]  # Previous step with analysis, for streaming emission
     _decision: Optional[dict]  # LLM decision from think node
     _tool_result: Optional[dict]  # Result from tool execution
     _just_transitioned_to: Optional[str]  # Phase we just transitioned to (prevents re-requesting)
@@ -465,6 +480,7 @@ def create_initial_state(
         "qa_history": [],
         # Internal fields
         "_current_step": None,
+        "_completed_step": None,
         "_decision": None,
         "_tool_result": None,
         "_just_transitioned_to": None,

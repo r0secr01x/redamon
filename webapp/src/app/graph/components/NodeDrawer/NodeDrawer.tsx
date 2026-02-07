@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { Drawer } from '@/components/ui'
 import { GraphNode } from '../../types'
 import { getNodeColor } from '../../utils'
@@ -10,9 +11,24 @@ interface NodeDrawerProps {
   node: GraphNode | null
   isOpen: boolean
   onClose: () => void
+  onDeleteNode?: (nodeId: string) => Promise<void>
 }
 
-export function NodeDrawer({ node, isOpen, onClose }: NodeDrawerProps) {
+export function NodeDrawer({ node, isOpen, onClose, onDeleteNode }: NodeDrawerProps) {
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  const handleDelete = async () => {
+    if (!node || !onDeleteNode) return
+    if (!confirm('Delete this Exploit node and all its connections?')) return
+    setIsDeleting(true)
+    try {
+      await onDeleteNode(node.id)
+      onClose()
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
   // Sort properties with created_at and updated_at at the bottom
   const sortedProperties = node
     ? Object.entries(node.properties || {}).sort(([a], [b]) => {
@@ -37,7 +53,19 @@ export function NodeDrawer({ node, isOpen, onClose }: NodeDrawerProps) {
       {node && (
         <>
           <div className={styles.section}>
-            <h3 className={styles.sectionTitleBasicInfo}>Basic Info</h3>
+            <div className={styles.sectionHeader}>
+              <h3 className={styles.sectionTitleBasicInfo}>Basic Info</h3>
+              {node.type === 'Exploit' && onDeleteNode && (
+                <button
+                  className={styles.deleteButton}
+                  onClick={handleDelete}
+                  disabled={isDeleting}
+                  title="Delete exploit node"
+                >
+                  {isDeleting ? '...' : '\uD83D\uDDD1'}
+                </button>
+              )}
+            </div>
             <div className={styles.propertyRow}>
               <span className={styles.propertyKey}>Type</span>
               <span

@@ -22,6 +22,7 @@ from state import (
     AgentState,
     InvokeResponse,
     ExecutionStep,
+    LLMDecision,
     TargetInfo,
     PhaseTransitionRequest,
     PhaseHistoryEntry,
@@ -49,7 +50,7 @@ from tools import (
 )
 from prompts import (
     REACT_SYSTEM_PROMPT,
-    OUTPUT_ANALYSIS_PROMPT,
+    PENDING_OUTPUT_ANALYSIS_SECTION,
     PHASE_TRANSITION_MESSAGE,
     USER_QUESTION_MESSAGE,
     FINAL_REPORT_PROMPT,
@@ -59,7 +60,7 @@ from orchestrator_helpers import (
     json_dumps_safe,
     extract_json,
     parse_llm_decision,
-    parse_analysis_response,
+    try_parse_llm_decision,
     classify_attack_path,
     determine_phase_for_new_objective,
     save_graph_image,
@@ -186,7 +187,6 @@ class AgentOrchestrator:
         builder.add_node("initialize", self._initialize_node)
         builder.add_node("think", self._think_node)
         builder.add_node("execute_tool", self._execute_tool_node)
-        builder.add_node("analyze_output", self._analyze_output_node)
         builder.add_node("await_approval", self._await_approval_node)
         builder.add_node("process_approval", self._process_approval_node)
         builder.add_node("await_question", self._await_question_node)
@@ -219,18 +219,8 @@ class AgentOrchestrator:
             }
         )
 
-        # Tool execution flow
-        builder.add_edge("execute_tool", "analyze_output")
-
-        # After analysis, continue loop or end
-        builder.add_conditional_edges(
-            "analyze_output",
-            self._route_after_analyze,
-            {
-                "think": "think",
-                "generate_response": "generate_response",
-            }
-        )
+        # Tool execution flow — goes directly back to think (analysis merged into think node)
+        builder.add_edge("execute_tool", "think")
 
         # Approval flow - pause for user input
         builder.add_edge("await_approval", END)
@@ -488,6 +478,26 @@ class AgentOrchestrator:
             qa_history=qa_history_formatted,
         )
 
+        # CHECK: Is there a pending tool output to analyze?
+        # When execute_tool ran before this think node, _current_step has tool_output but no output_analysis yet
+        pending_step = state.get("_current_step")
+        has_pending_output = (
+            pending_step and
+            pending_step.get("tool_output") is not None and
+            not pending_step.get("output_analysis")  # Not yet analyzed
+        )
+
+        if has_pending_output:
+            tool_output_raw = pending_step.get("tool_output") or pending_step.get("error_message") or "No output"
+            output_section = PENDING_OUTPUT_ANALYSIS_SECTION.format(
+                tool_name=pending_step.get("tool_name", "unknown"),
+                tool_args=json_dumps_safe(pending_step.get("tool_args") or {}),
+                success=pending_step.get("success", False),
+                tool_output=tool_output_raw[:get_setting('TOOL_OUTPUT_MAX_CHARS', 8000)],
+            )
+            system_prompt = system_prompt + "\n" + output_section
+            logger.info(f"[{user_id}/{project_id}/{session_id}] Injected output analysis section for tool: {pending_step.get('tool_name')}")
+
         # Log the full prompt for debugging
         logger.info(f"\n{'#'*80}")
         logger.info(f"# THINK NODE PROMPT - Iteration {iteration} - Phase: {phase}")
@@ -504,24 +514,51 @@ class AgentOrchestrator:
             logger.info(f"PROMPT[{i}:{i+len(chunk)}]:\n{chunk}")
         logger.info(f"{'#'*80}\n")
 
-        # Get LLM decision
+        # Get LLM decision with retry on parse failures
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content="Based on the current state, what is your next action? Output EXACTLY ONE valid JSON object and nothing else. Do NOT simulate tool execution - you will receive actual tool output after submitting your decision. Do NOT output multiple JSON objects or continue the conversation - just ONE decision JSON.")
         ]
 
-        response = await self.llm.ainvoke(messages)
-        response_text = response.content.strip()
+        max_retries = get_setting('LLM_PARSE_MAX_RETRIES', 3)
+        decision = None
+        last_error = None
+        response_text = ""
 
-        # Log the raw LLM response
-        logger.info(f"\n{'='*60}")
-        logger.info(f"LLM RAW RESPONSE - Iteration {iteration}")
-        logger.info(f"{'='*60}")
-        logger.info(f"{response_text}")
-        logger.info(f"{'='*60}\n")
+        for attempt in range(max_retries):
+            if attempt > 0:
+                # Append the failed response and error feedback for retry
+                logger.warning(f"[{user_id}/{project_id}/{session_id}] Parse attempt {attempt}/{max_retries} failed: {last_error}")
+                messages.append(AIMessage(content=response_text))
+                messages.append(HumanMessage(
+                    content=f"Your previous JSON response failed validation:\n{last_error}\n\n"
+                            f"Fix the error and output EXACTLY ONE valid JSON object. No extra text."
+                ))
 
-        # Parse the JSON response into Pydantic model
-        decision = parse_llm_decision(response_text)
+            response = await self.llm.ainvoke(messages)
+            response_text = response.content.strip()
+
+            # Log the raw LLM response
+            logger.info(f"\n{'='*60}")
+            logger.info(f"LLM RAW RESPONSE - Iteration {iteration} (attempt {attempt+1}/{max_retries})")
+            logger.info(f"{'='*60}")
+            logger.info(f"{response_text}")
+            logger.info(f"{'='*60}\n")
+
+            decision, last_error = try_parse_llm_decision(response_text)
+            if decision:
+                break
+
+        # If all retries failed, use the fallback
+        if not decision:
+            logger.error(f"[{user_id}/{project_id}/{session_id}] All {max_retries} parse attempts failed: {last_error}")
+            decision = LLMDecision(
+                thought=response_text,
+                reasoning="Failed to parse structured response after retries",
+                action="complete",
+                completion_reason=f"Unable to continue: JSON parsing failed after {max_retries} attempts",
+                updated_todo_list=[],
+            )
 
         logger.info(f"[{user_id}/{project_id}/{session_id}] Decision: action={decision.action}, tool={decision.tool_name}")
 
@@ -596,7 +633,85 @@ class AgentOrchestrator:
             "_current_step": step.model_dump(),
             "_decision": decision.model_dump(),
             "_just_transitioned_to": None,  # Clear the marker
+            "_completed_step": None,  # Will be set if we process pending output
         }
+
+        # Process output analysis if we had pending tool output
+        if has_pending_output:
+            if decision.output_analysis:
+                analysis = decision.output_analysis
+
+                # Update step with analysis data (merged from old _analyze_output_node)
+                pending_step["output_analysis"] = analysis.interpretation
+                pending_step["actionable_findings"] = analysis.actionable_findings or []
+                pending_step["recommended_next_steps"] = analysis.recommended_next_steps or []
+
+                # Log analysis results
+                logger.info(f"\n{'='*60}")
+                logger.info(f"OUTPUT ANALYSIS (inline) - Iteration {iteration} - Phase: {phase}")
+                logger.info(f"{'='*60}")
+                logger.info(f"TOOL: {pending_step.get('tool_name')}")
+                logger.info(f"INTERPRETATION: {analysis.interpretation[:2000]}")
+                if analysis.actionable_findings:
+                    logger.info(f"ACTIONABLE FINDINGS: {analysis.actionable_findings}")
+                if analysis.recommended_next_steps:
+                    logger.info(f"RECOMMENDED NEXT STEPS: {analysis.recommended_next_steps}")
+                if analysis.exploit_succeeded:
+                    logger.info(f"EXPLOIT SUCCEEDED: {analysis.exploit_details}")
+                logger.info(f"{'='*60}\n")
+
+                # Merge target info
+                current_target = TargetInfo(**state.get("target_info", {}))
+                extracted = analysis.extracted_info
+                new_target = TargetInfo(
+                    primary_target=extracted.primary_target,
+                    ports=extracted.ports,
+                    services=extracted.services,
+                    technologies=extracted.technologies,
+                    vulnerabilities=extracted.vulnerabilities,
+                    credentials=extracted.credentials,
+                    sessions=extracted.sessions,
+                )
+                merged_target = current_target.merge_from(new_target)
+
+                # Exploit success detection (moved from old _analyze_output_node)
+                if analysis.exploit_succeeded and analysis.exploit_details and phase == "exploitation":
+                    details = analysis.exploit_details
+                    try:
+                        from orchestrator_helpers.exploit_writer import create_exploit_node
+                        create_exploit_node(
+                            self.neo4j_uri, self.neo4j_user, self.neo4j_password,
+                            user_id, project_id,
+                            attack_type=details.get("attack_type", state.get("attack_path_type", "cve_exploit")),
+                            target_ip=details.get("target_ip", merged_target.primary_target),
+                            target_port=details.get("target_port"),
+                            cve_ids=details.get("cve_ids", merged_target.vulnerabilities),
+                            session_id=details.get("session_id"),
+                            username=details.get("username"),
+                            password=details.get("password"),
+                            evidence=details.get("evidence", ""),
+                            execution_trace=state.get("execution_trace", []),
+                        )
+                        logger.info(f"[{user_id}/{project_id}/{session_id}] Exploit success detected - node created")
+                    except Exception as e:
+                        logger.error(f"[{user_id}/{project_id}/{session_id}] Failed to create Exploit node: {e}")
+
+                # Append completed step to execution trace
+                execution_trace = state.get("execution_trace", []) + [pending_step]
+                updates["execution_trace"] = execution_trace
+                updates["target_info"] = merged_target.model_dump()
+                updates["_completed_step"] = pending_step  # For streaming emission
+                updates["messages"] = [AIMessage(content=f"**Step {pending_step.get('iteration')}** [{phase}]\n\n{analysis.interpretation}")]
+
+            else:
+                # LLM didn't return analysis — use raw output as fallback
+                logger.warning(f"[{user_id}/{project_id}/{session_id}] No output_analysis in LLM response, using fallback")
+                pending_step["output_analysis"] = (pending_step.get("tool_output") or "")[:2000]
+                pending_step["actionable_findings"] = []
+                pending_step["recommended_next_steps"] = []
+                execution_trace = state.get("execution_trace", []) + [pending_step]
+                updates["execution_trace"] = execution_trace
+                updates["_completed_step"] = pending_step
 
         # Handle different actions
         if decision.action == "complete":
@@ -858,128 +973,6 @@ class AgentOrchestrator:
         # Include any extra updates (e.g., msf_session_reset_done)
         updates.update(extra_updates)
         return updates
-
-    async def _analyze_output_node(self, state: AgentState, config = None) -> dict:
-        """Analyze tool output and extract intelligence."""
-        user_id, project_id, session_id = get_identifiers(state, config)
-
-        step_data = state.get("_current_step") or {}
-        tool_output = step_data.get("tool_output") or ""
-        tool_name = step_data.get("tool_name") or "unknown"
-        iteration = state.get("current_iteration", 0)
-        phase = state.get("current_phase", "informational")
-
-        # Handle None or empty tool output
-        if not tool_output:
-            tool_output = step_data.get("error_message") or "No output received from tool"
-
-        # Use LLM to analyze the output (truncate to avoid token limits)
-        analysis_prompt = OUTPUT_ANALYSIS_PROMPT.format(
-            tool_name=tool_name,
-            tool_args=json_dumps_safe(step_data.get("tool_args") or {}),
-            tool_output=tool_output[:get_setting('TOOL_OUTPUT_MAX_CHARS', 8000)] if tool_output else "No output",
-            current_target_info=json_dumps_safe(state.get("target_info") or {}, indent=2),
-        )
-
-        response = await self.llm.ainvoke([HumanMessage(content=analysis_prompt)])
-        analysis = parse_analysis_response(response.content)
-
-        # Update step with analysis and rich data for streaming
-        step_data["output_analysis"] = analysis.interpretation
-        step_data["actionable_findings"] = analysis.actionable_findings or []
-        step_data["recommended_next_steps"] = analysis.recommended_next_steps or []
-
-        # Detailed logging - output analysis
-        logger.info(f"\n{'='*60}")
-        logger.info(f"ANALYZE OUTPUT - Iteration {iteration} - Phase: {phase}")
-        logger.info(f"{'='*60}")
-        logger.info(f"TOOL: {tool_name}")
-        logger.info(f"OUTPUT_ANALYSIS:")
-        interpretation = analysis.interpretation or "(no interpretation)"
-        # Show interpretation with nice formatting
-        for line in interpretation.split('\n'):
-            logger.info(f"  | {line}")
-
-        # Log extracted info
-        extracted = analysis.extracted_info
-        if extracted:
-            logger.info(f"EXTRACTED INFO:")
-            if extracted.primary_target:
-                logger.info(f"  primary_target: {extracted.primary_target}")
-            if extracted.ports:
-                logger.info(f"  ports: {extracted.ports}")
-            if extracted.services:
-                logger.info(f"  services: {extracted.services}")
-            if extracted.technologies:
-                logger.info(f"  technologies: {extracted.technologies}")
-            if extracted.vulnerabilities:
-                logger.info(f"  vulnerabilities: {extracted.vulnerabilities}")
-            if extracted.credentials:
-                logger.info(f"  credentials: {len(extracted.credentials)} found")
-            if extracted.sessions:
-                logger.info(f"  sessions: {extracted.sessions}")
-
-        # Log actionable findings
-        if analysis.actionable_findings:
-            logger.info(f"ACTIONABLE FINDINGS:")
-            for finding in analysis.actionable_findings:
-                logger.info(f"  - {finding}")
-
-        # Log recommended next steps
-        if analysis.recommended_next_steps:
-            logger.info(f"RECOMMENDED NEXT STEPS:")
-            for step_rec in analysis.recommended_next_steps:
-                logger.info(f"  - {step_rec}")
-
-        logger.info(f"{'='*60}\n")
-
-        # Update target info with extracted data
-        current_target = TargetInfo(**state.get("target_info", {}))
-        new_target = TargetInfo(
-            primary_target=extracted.primary_target,
-            ports=extracted.ports,
-            services=extracted.services,
-            technologies=extracted.technologies,
-            vulnerabilities=extracted.vulnerabilities,
-            credentials=extracted.credentials,
-            sessions=extracted.sessions,
-        )
-        merged_target = current_target.merge_from(new_target)
-
-        # LLM-based exploit success detection (primary detection — covers all exploit types)
-        if analysis.exploit_succeeded and analysis.exploit_details and phase == "exploitation":
-            details = analysis.exploit_details
-            try:
-                from orchestrator_helpers.exploit_writer import create_exploit_node
-                create_exploit_node(
-                    self.neo4j_uri, self.neo4j_user, self.neo4j_password,
-                    user_id, project_id,
-                    attack_type=details.get("attack_type", state.get("attack_path_type", "cve_exploit")),
-                    target_ip=details.get("target_ip", merged_target.primary_target),
-                    target_port=details.get("target_port"),
-                    cve_ids=details.get("cve_ids", merged_target.vulnerabilities),
-                    session_id=details.get("session_id"),
-                    username=details.get("username"),
-                    password=details.get("password"),
-                    evidence=details.get("evidence", ""),
-                    execution_trace=state.get("execution_trace", []),
-                )
-                logger.info(f"[{user_id}/{project_id}/{session_id}] LLM detected exploit success - Exploit node created")
-            except Exception as e:
-                logger.error(f"[{user_id}/{project_id}/{session_id}] Failed to create Exploit node from LLM detection: {e}")
-
-        # Add step to execution trace
-        execution_trace = state.get("execution_trace", []) + [step_data]
-
-        # Add AI message to conversation
-        analysis_summary = analysis.interpretation or tool_output[:10000]
-
-        return {
-            "_current_step": step_data,
-            "execution_trace": execution_trace,
-            "target_info": merged_target.model_dump(),
-            "messages": [AIMessage(content=f"**Step {step_data.get('iteration')}** [{state.get('current_phase')}]\n\n{analysis_summary}")],
-        }
 
     async def _await_approval_node(self, state: AgentState, config = None) -> dict:
         """Pause and request user approval for phase transition."""
@@ -1246,16 +1239,6 @@ class AgentOrchestrator:
             # No valid action and no tool - end session
             logger.warning(f"No valid action in decision: {action}, tool: {tool_name}")
             return "generate_response"
-
-    def _route_after_analyze(self, state: AgentState) -> str:
-        """Route after output analysis."""
-        if state.get("task_complete"):
-            return "generate_response"
-
-        if state.get("current_iteration", 0) >= state.get("max_iterations", get_setting('MAX_ITERATIONS', 100)):
-            return "generate_response"
-
-        return "think"
 
     def _route_after_approval(self, state: AgentState) -> str:
         """Route after processing approval."""
@@ -1635,11 +1618,36 @@ class AgentOrchestrator:
                     await callback.on_question_request(pending)
                     state["_emitted_question_key"] = question_key
 
-            # Emit thinking FIRST (from _decision stored by _think_node)
-            # This ensures thinking appears BEFORE the tool execution it leads to
+            # 1. Emit tool_complete for PREVIOUS completed step (if any)
+            #    This MUST come before thinking, so the frontend sees:
+            #    tool_complete → thinking → tool_start (correct timeline order)
+            if "_completed_step" in state and state["_completed_step"]:
+                cstep = state["_completed_step"]
+                if cstep.get("success") is not None and cstep.get("output_analysis") and not cstep.get("_emitted_complete"):
+                    await callback.on_tool_complete(
+                        cstep.get("tool_name", "unknown"),
+                        cstep["success"],
+                        cstep.get("output_analysis", "")[:10000],
+                        actionable_findings=cstep.get("actionable_findings", []),
+                        recommended_next_steps=cstep.get("recommended_next_steps", []),
+                    )
+                    cstep["_emitted_complete"] = True
+
+                    # Also emit execution_step summary for the completed step
+                    await callback.on_execution_step({
+                        "iteration": cstep.get("iteration", 0),
+                        "phase": state.get("current_phase", "informational"),
+                        "thought": cstep.get("thought", ""),
+                        "tool_name": cstep.get("tool_name"),
+                        "success": cstep.get("success", False),
+                        "output_summary": cstep.get("output_analysis", "")[:10000],
+                        "actionable_findings": cstep.get("actionable_findings", []),
+                        "recommended_next_steps": cstep.get("recommended_next_steps", []),
+                    })
+
+            # 2. Emit thinking (from _decision stored by _think_node)
             if "_decision" in state and state["_decision"]:
                 decision = state["_decision"]
-                # Only emit if we haven't emitted this decision yet
                 if decision.get("thought") and not decision.get("_emitted_thinking"):
                     try:
                         await callback.on_thinking(
@@ -1648,12 +1656,11 @@ class AgentOrchestrator:
                             decision.get("thought", ""),
                             decision.get("reasoning", "")
                         )
-                        # Mark as emitted to avoid duplicates
                         decision["_emitted_thinking"] = True
                     except Exception as e:
                         logger.error(f"Error emitting thinking event: {e}")
 
-            # Execution step (from _current_step) - AFTER thinking
+            # 3. Emit tool_start and output chunks for CURRENT step (new tool)
             if "_current_step" in state and state["_current_step"]:
                 step = state["_current_step"]
                 # Emit tool start
@@ -1673,31 +1680,8 @@ class AgentOrchestrator:
                     )
                     step["_emitted_output"] = True
 
-                # Emit tool complete ONLY after analysis is done (output_analysis exists)
-                # This ensures we have all the rich data to send
-                if step.get("success") is not None and step.get("output_analysis") and not step.get("_emitted_complete"):
-                    await callback.on_tool_complete(
-                        step.get("tool_name", "unknown"),
-                        step["success"],
-                        step.get("output_analysis", "")[:10000],
-                        # Include rich analysis data
-                        actionable_findings=step.get("actionable_findings", []),
-                        recommended_next_steps=step.get("recommended_next_steps", []),
-                    )
-                    step["_emitted_complete"] = True
-
-                # Emit execution step summary (only after analysis)
-                if step.get("output_analysis"):
-                    await callback.on_execution_step({
-                        "iteration": step.get("iteration", 0),
-                        "phase": state.get("current_phase", "informational"),
-                        "thought": step.get("thought", ""),
-                        "tool_name": step.get("tool_name"),
-                        "success": step.get("success", False),
-                        "output_summary": step.get("output_analysis", "")[:10000],
-                        "actionable_findings": step.get("actionable_findings", []),
-                        "recommended_next_steps": step.get("recommended_next_steps", []),
-                    })
+                # NOTE: tool_complete for current step will be emitted via _completed_step
+                # in the NEXT think iteration
 
             # Task complete - only emit if this is a genuine completion, not stale state
             # We check for completion_reason to ensure this is from _generate_response_node

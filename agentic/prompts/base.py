@@ -495,6 +495,71 @@ When `exploit_succeeded` is true, fill `exploit_details` with:
 
 
 # =============================================================================
+# PENDING OUTPUT ANALYSIS SECTION (injected into REACT_SYSTEM_PROMPT when tool output is pending)
+# =============================================================================
+
+PENDING_OUTPUT_ANALYSIS_SECTION = """
+## Previous Tool Output (MUST ANALYZE)
+
+The following tool was just executed. You MUST include an `output_analysis` object in your JSON response.
+
+**Tool**: {tool_name}
+**Arguments**: {tool_args}
+**Success**: {success}
+**Output**:
+```
+{tool_output}
+```
+
+### Analysis Instructions
+
+Include an `output_analysis` object in your JSON response:
+```json
+"output_analysis": {{
+    "interpretation": "What this output tells us about the target",
+    "extracted_info": {{
+        "primary_target": "IP or hostname if discovered (or null)",
+        "ports": [],
+        "services": [],
+        "technologies": [],
+        "vulnerabilities": [],
+        "credentials": [],
+        "sessions": []
+    }},
+    "actionable_findings": ["Finding that requires follow-up"],
+    "recommended_next_steps": ["Suggested next action"],
+    "exploit_succeeded": false,
+    "exploit_details": null
+}}
+```
+
+**exploit_succeeded = true** ONLY when output shows:
+- A Metasploit session was opened ("session X opened", "Meterpreter session X")
+- Brute force credentials were found ("[+] Success: 'user:pass'")
+- Stateless exploit returned proof of compromise (file contents, RCE output like "uid=0(root)")
+
+**exploit_succeeded = false** for: partial progress, failed attempts, information gathering, module configuration.
+
+When `exploit_succeeded` is true, include `exploit_details`:
+```json
+"exploit_details": {{
+    "attack_type": "cve_exploit or brute_force",
+    "target_ip": "IP of compromised target",
+    "target_port": 80,
+    "cve_ids": ["CVE-XXXX-XXXXX"],
+    "username": "compromised user or null",
+    "password": "compromised pass or null",
+    "session_id": 1,
+    "evidence": "Brief proof the exploit worked"
+}}
+```
+
+Only include fields in `extracted_info` that have new information.
+Analyze the output FIRST, then decide your next action as usual.
+"""
+
+
+# =============================================================================
 # PHASE TRANSITION PROMPT
 # =============================================================================
 

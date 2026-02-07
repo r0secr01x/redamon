@@ -1612,6 +1612,17 @@ class Neo4jClient:
                 tech_version = tech_data.get("version")  # Version from CVE lookup
                 cves = tech_data.get("cves", [])
 
+                # Extract clean technology name from key by stripping version suffix
+                # e.g. "Apache HTTP Server:2.4.49" → "Apache HTTP Server"
+                # e.g. "Apache/2.4.49" → "Apache"
+                tech_name_clean = tech_name
+                if tech_version:
+                    for sep in [":", "/"]:
+                        suffix = f"{sep}{tech_version}"
+                        if tech_name_clean.endswith(suffix):
+                            tech_name_clean = tech_name_clean[:-len(suffix)]
+                            break
+
                 for cve in cves:
                     try:
                         cve_id = cve.get("id")
@@ -1651,24 +1662,26 @@ class Neo4jClient:
 
                         # Create relationship: Technology -[:HAS_KNOWN_CVE]-> CVE
                         # Match Technology node by name AND version (case-insensitive)
-                        # Try multiple matching strategies:
-                        # 1. Match by product name + version
-                        # 2. Match by tech_name key + version
-                        # 3. Match by product name only (for technologies without version)
+                        # Matching strategies (in order):
+                        # 1. Exact match by clean name (key without version suffix)
+                        # 2. Exact match by NVD product name or raw key
+                        # 3. CONTAINS fallback (product name within technology name)
                         if tech_version:
-                            # First try: exact product + version match
                             result = session.run(
                                 """
                                 MATCH (t:Technology {project_id: $project_id})
-                                WHERE (toLower(t.name) = toLower($tech_product)
-                                       OR toLower(t.name) = toLower($tech_key))
+                                WHERE (toLower(t.name) = toLower($tech_name_clean)
+                                       OR toLower(t.name) = toLower($tech_product)
+                                       OR toLower(t.name) = toLower($tech_key)
+                                       OR toLower(t.name) CONTAINS toLower($tech_product))
                                   AND t.version = $tech_version
                                 MATCH (c:CVE {id: $cve_id})
                                 MERGE (t)-[:HAS_KNOWN_CVE]->(c)
                                 RETURN count(*) as matched
                                 """,
-                                project_id=project_id, tech_product=tech_product,
-                                tech_key=tech_name, tech_version=tech_version, cve_id=cve_id
+                                project_id=project_id, tech_name_clean=tech_name_clean,
+                                tech_product=tech_product, tech_key=tech_name,
+                                tech_version=tech_version, cve_id=cve_id
                             )
                             matched = result.single()["matched"]
                             if matched > 0:
@@ -1678,15 +1691,17 @@ class Neo4jClient:
                             result = session.run(
                                 """
                                 MATCH (t:Technology {project_id: $project_id})
-                                WHERE (toLower(t.name) = toLower($tech_product)
-                                       OR toLower(t.name) = toLower($tech_key))
+                                WHERE (toLower(t.name) = toLower($tech_name_clean)
+                                       OR toLower(t.name) = toLower($tech_product)
+                                       OR toLower(t.name) = toLower($tech_key)
+                                       OR toLower(t.name) CONTAINS toLower($tech_product))
                                   AND t.version IS NULL
                                 MATCH (c:CVE {id: $cve_id})
                                 MERGE (t)-[:HAS_KNOWN_CVE]->(c)
                                 RETURN count(*) as matched
                                 """,
-                                project_id=project_id, tech_product=tech_product,
-                                tech_key=tech_name, cve_id=cve_id
+                                project_id=project_id, tech_name_clean=tech_name_clean,
+                                tech_product=tech_product, tech_key=tech_name, cve_id=cve_id
                             )
                             matched = result.single()["matched"]
                             if matched > 0:

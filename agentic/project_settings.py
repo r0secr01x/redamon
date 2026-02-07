@@ -46,6 +46,9 @@ DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
     # Neo4j
     'CYPHER_MAX_RETRIES': 3,
 
+    # LLM Parse Retry
+    'LLM_PARSE_MAX_RETRIES': 3,
+
     # Debug
     'CREATE_GRAPH_IMAGE_ON_INIT': False,
 

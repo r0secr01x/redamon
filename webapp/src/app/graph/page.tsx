@@ -135,6 +135,19 @@ export default function GraphPage() {
     window.open(`/api/recon/${projectId}/download`, '_blank')
   }, [projectId])
 
+  const handleDeleteNode = useCallback(async (nodeId: string) => {
+    if (!projectId) return
+    const res = await fetch(`/api/graph?nodeId=${nodeId}&projectId=${projectId}`, {
+      method: 'DELETE',
+    })
+    if (!res.ok) {
+      const data = await res.json()
+      alert(data.error || 'Failed to delete node')
+      return
+    }
+    refetchGraph()
+  }, [projectId, refetchGraph])
+
   const handleToggleLogs = useCallback(() => {
     setIsLogsOpen(prev => !prev)
   }, [])
@@ -181,6 +194,7 @@ export default function GraphPage() {
           node={selectedNode}
           isOpen={drawerOpen}
           onClose={clearSelection}
+          onDeleteNode={handleDeleteNode}
         />
 
         <div ref={contentRef} className={styles.content}>

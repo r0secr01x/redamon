@@ -107,8 +107,7 @@ flowchart TB
 | `orchestrator_helpers/` | Helper modules extracted from orchestrator |
 | `orchestrator_helpers/config.py` | Session config, checkpointer, thread ID management |
 | `orchestrator_helpers/phase.py` | Attack path classification & phase determination |
-| `orchestrator_helpers/detection.py` | Session & credential detection from tool output |
-| `orchestrator_helpers/parsing.py` | LLM response parsing (decisions & analysis) |
+| `orchestrator_helpers/parsing.py` | LLM response parsing (decisions & inline analysis) |
 | `orchestrator_helpers/json_utils.py` | JSON serialization with datetime support |
 | `orchestrator_helpers/debug.py` | Graph visualization (Mermaid PNG export) |
 
@@ -250,10 +249,7 @@ stateDiagram-v2
     think --> await_question: action=ask_user
     think --> generate_response: action=complete OR max_iterations
 
-    execute_tool --> analyze_output
-
-    analyze_output --> think: Continue iteration
-    analyze_output --> generate_response: Task complete OR max_iterations
+    execute_tool --> think: Output analyzed inline in next think
 
     await_approval --> [*]: Pauses for user input
 
@@ -277,7 +273,6 @@ flowchart LR
         INIT[initialize]
         THINK[think]
         EXEC[execute_tool]
-        ANALYZE[analyze_output]
         AWAIT_A[await_approval]
         PROC_A[process_approval]
         AWAIT_Q[await_question]
@@ -293,13 +288,15 @@ flowchart LR
         I5[Migrate legacy state]
     end
 
-    subgraph ThinkDesc["Think Node - LLM Call #1"]
+    subgraph ThinkDesc["Think Node - Single LLM Call"]
         T1[Build system prompt with attack-path-specific tools]
-        T2[Format execution trace with objective grouping]
-        T3[Get LLM decision JSON]
-        T4[Parse action: use_tool/transition_phase/complete/ask_user]
-        T5[Update todo list]
-        T6[Pre-exploitation validation: force ask_user if LHOST/LPORT missing]
+        T2[If pending tool output: inject output analysis section]
+        T3[Format execution trace with objective grouping]
+        T4[Get LLM decision JSON with inline output_analysis]
+        T5[Parse action: use_tool/transition_phase/complete/ask_user]
+        T6[Process output_analysis: merge target info, detect exploits]
+        T7[Update todo list]
+        T8[Pre-exploitation validation: force ask_user if LHOST/LPORT missing]
     end
 
     subgraph ExecDesc["Execute Tool Node"]
@@ -311,18 +308,7 @@ flowchart LR
         E6[Capture output and errors]
     end
 
-    subgraph AnalyzeDesc["Analyze Output Node - LLM Call #2"]
-        A1[Truncate output if too long]
-        A2[LLM interprets tool output]
-        A3[Extract target info: ports, services, vulns]
-        A4[Detect sessions from output regex]
-        A5[Detect credentials from brute force output]
-        A6[Identify actionable findings]
-        A7[Recommend next steps]
-        A8[Add step to execution trace]
-    end
-
-    subgraph GenDesc["Generate Response Node - LLM Call #3"]
+    subgraph GenDesc["Generate Response Node - LLM Call #2"]
         G1[Build final report prompt]
         G2[Summarize session findings]
         G3[Mark task complete]
@@ -331,7 +317,6 @@ flowchart LR
     INIT -.-> InitDesc
     THINK -.-> ThinkDesc
     EXEC -.-> ExecDesc
-    ANALYZE -.-> AnalyzeDesc
     GEN -.-> GenDesc
 ```
 
@@ -423,13 +408,13 @@ This prevents exploitation failures by ensuring reverse/bind payload parameters 
 
 ### Credential Detection
 
-During brute force attacks, the analyze output node automatically extracts discovered credentials:
+During brute force attacks, the think node's inline output analysis automatically extracts discovered credentials:
 
 ```mermaid
 flowchart LR
-    OUTPUT[Tool output from<br/>auxiliary/scanner module] --> REGEX[Regex pattern match<br/>IP:PORT - Success: user:pass]
+    OUTPUT[Tool output from<br/>auxiliary/scanner module] --> ANALYSIS[Think node inline analysis<br/>LLM extracts credentials]
 
-    REGEX --> FOUND{Credentials found?}
+    ANALYSIS --> FOUND{Credentials found?}
     FOUND -->|Yes| MERGE[Merge into TargetInfo.credentials]
     FOUND -->|No| SKIP[No update]
 
@@ -607,6 +592,8 @@ flowchart LR
 
 ### Streaming Event Flow
 
+The think node emits events in a specific order to maintain correct timeline rendering in the frontend. When the think node processes both a completed previous step and a new decision, events are emitted as: `tool_complete` (previous) -> `thinking` (new) -> `tool_start` (new).
+
 ```mermaid
 sequenceDiagram
     participant C as Client (Browser)
@@ -620,39 +607,40 @@ sequenceDiagram
     C->>WS: query {question: "Scan ports on 192.168.1.1"}
     WS->>O: invoke_with_streaming(question, callback)
 
-    loop For each graph event
-        O->>CB: on_phase_update("informational", 1, "cve_exploit")
-        CB-->>WS: phase_update message
-        WS-->>C: {type: "phase_update", ...}
+    Note over O,CB: First iteration (no pending output)
+    O->>CB: on_phase_update("informational", 1, "cve_exploit")
+    CB-->>WS-->>C: phase_update
 
-        O->>CB: on_thinking(1, "informational", "Need to scan...", "Port scan required")
-        CB-->>WS: thinking message
-        WS-->>C: {type: "thinking", ...}
+    O->>CB: on_thinking(1, "informational", "Need to scan...", "Port scan required")
+    CB-->>WS-->>C: thinking
 
-        O->>CB: on_tool_start("naabu", {target: "192.168.1.1"})
-        CB-->>WS: tool_start message
-        WS-->>C: {type: "tool_start", ...}
+    O->>CB: on_tool_start("naabu", {target: "192.168.1.1"})
+    CB-->>WS-->>C: tool_start
 
-        O->>CB: on_tool_output_chunk("naabu", "22/tcp open\n80/tcp open", true)
-        CB-->>WS: tool_output_chunk message
-        WS-->>C: {type: "tool_output_chunk", ...}
+    Note over O: Tool executes...
+    O->>CB: on_tool_output_chunk("naabu", "22/tcp open\n80/tcp open", true)
+    CB-->>WS-->>C: tool_output_chunk
 
-        O->>CB: on_tool_complete("naabu", true, "Found 2 open ports")
-        CB-->>WS: tool_complete message
-        WS-->>C: {type: "tool_complete", ...}
+    Note over O,CB: Second iteration (pending output from naabu)
+    O->>CB: on_tool_complete("naabu", true, "Found 2 open ports")
+    CB-->>WS-->>C: tool_complete (previous step)
 
-        O->>CB: on_todo_update([{description: "Analyze services", status: "pending"}])
-        CB-->>WS: todo_update message
-        WS-->>C: {type: "todo_update", ...}
-    end
+    O->>CB: on_thinking(2, "informational", "Found open ports...", "Query graph next")
+    CB-->>WS-->>C: thinking (new decision)
+
+    O->>CB: on_tool_start("query_graph", {question: "..."})
+    CB-->>WS-->>C: tool_start (new tool)
+
+    O->>CB: on_todo_update([{description: "Analyze services", status: "pending"}])
+    CB-->>WS-->>C: todo_update
+
+    Note over O: ... continues until complete ...
 
     O->>CB: on_response("Scan complete. Found ports 22, 80.", 3, "informational", true)
-    CB-->>WS: response message
-    WS-->>C: {type: "response", ...}
+    CB-->>WS-->>C: response
 
     O->>CB: on_task_complete("Task completed", "informational", 3)
-    CB-->>WS: task_complete message
-    WS-->>C: {type: "task_complete", ...}
+    CB-->>WS-->>C: task_complete
 ```
 
 ---
@@ -757,9 +745,9 @@ flowchart TB
     DECISION -->|ask_user| AWAIT_Q[Await Question]
     DECISION -->|complete| GEN[Generate Response]
 
-    EXEC --> ANALYZE[Analyze Output<br/>+ detect sessions/credentials]
-    ANALYZE --> ITER_CHECK{Max iterations?}
-    ITER_CHECK -->|No| THINK
+    EXEC --> THINK_AGAIN[Think Node<br/>analyzes output inline + decides next]
+    THINK_AGAIN --> ITER_CHECK{Max iterations?}
+    ITER_CHECK -->|No| PRE_VALID
     ITER_CHECK -->|Yes| GEN
 
     PHASE_CHECK -->|Yes| AWAIT_A[Await Approval]
@@ -780,7 +768,7 @@ flowchart TB
     style PAUSE_Q fill:#FFD700
     style CLASSIFY fill:#DDA0DD
     style THINK fill:#87CEEB
-    style ANALYZE fill:#87CEEB
+    style THINK_AGAIN fill:#87CEEB
     style GEN fill:#87CEEB
 ```
 
@@ -879,7 +867,7 @@ sequenceDiagram
     T-->>MSF: Reverse shell connects
     MSF-->>A: "Sending stage..." (streamed via progress chunks)
 
-    Note over A: Session detected via regex in output
+    Note over A: Session detected via inline output analysis
     A->>MSF: msf_wait_for_session(timeout=120)
     MSF-->>A: Session 1 opened
 
@@ -934,8 +922,7 @@ sequenceDiagram
     T-->>MSF: [+] Success: 'admin:password123'
     MSF-->>A: Credential found + session created
 
-    Note over A: Credentials auto-extracted via regex
-    Note over A: Session detected in output
+    Note over A: Credentials + session detected via inline output analysis
 
     A->>A: Request phase transition to post_exploitation
     U->>A: Approve transition
@@ -1184,13 +1171,13 @@ flowchart TB
     PARSE -->|Fail| FALLBACK_JSON[Try extract partial fields]
 
     VALIDATE -->|Success| DECISION[LLMDecision object]
-    VALIDATE -->|Fail| PREPROCESS[Preprocess: remove empty objects]
+    VALIDATE -->|Fail| PREPROCESS[Preprocess: remove empty objects<br/>user_question, phase_transition, output_analysis]
 
     PREPROCESS --> VALIDATE2[Retry validation]
     VALIDATE2 -->|Success| DECISION
     VALIDATE2 -->|Fail| FALLBACK_DECISION[Fallback LLMDecision<br/>action=complete with error]
 
-    FALLBACK_JSON --> FALLBACK_ANALYSIS[Fallback OutputAnalysis<br/>with best-effort interpretation]
+    FALLBACK_JSON --> FALLBACK_ANALYSIS[Fallback: raw tool output<br/>used as interpretation]
 ```
 
 ### Metasploit Output Cleaning
