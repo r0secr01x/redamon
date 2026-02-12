@@ -21,10 +21,12 @@
   width: var(--drawer-width);
 }
 
-/* Overlay mode - uses transform and absolute positioning */
+/* Overlay mode - uses transform and fixed positioning */
 .drawerOverlay {
-  position: absolute;
-  top: 0;
+  position: fixed;
+  top: var(--drawer-top, 0px);
+  bottom: var(--drawer-bottom, 0px);
+  height: auto;
   width: var(--drawer-width);
   z-index: 10;
 }

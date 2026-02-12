@@ -402,6 +402,11 @@ class GVMScanner:
                 return status_text, report_id
             elif status_text in ("Stopped", "Stop Requested"):
                 raise RuntimeError(f"Task was stopped: {status_text}")
+            elif status_text == "Interrupted":
+                raise RuntimeError(
+                    f"Task was interrupted by GVM (likely resource exhaustion "
+                    f"after previous scan). Elapsed: {int(elapsed)}s"
+                )
             elif "Error" in status_text:
                 raise RuntimeError(f"Task failed: {status_text}")
             

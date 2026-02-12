@@ -1,5 +1,6 @@
 'use client'
 
+import { memo } from 'react'
 import { GraphData, GraphNode } from '../../types'
 import { GraphCanvas2D } from './GraphCanvas2D'
 import { GraphCanvas3D } from './GraphCanvas3D'
@@ -19,7 +20,7 @@ interface GraphCanvasProps {
   isDark?: boolean
 }
 
-export function GraphCanvas({
+export const GraphCanvas = memo(function GraphCanvas({
   data,
   isLoading,
   error,
@@ -86,4 +87,4 @@ export function GraphCanvas({
       />
     </div>
   )
-}
+})

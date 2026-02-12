@@ -568,8 +568,8 @@ class GitHubSecretHunter:
                         self.scan_gists(member)
 
         except GithubException as e:
-            if e.status == 404:
-                # Try as a user instead
+            if e.status in (404, 403):
+                # Not an organization (404) or no org access (403) — try as a user
                 self.scan_user()
             else:
                 raise

@@ -50,7 +50,7 @@ export function NodeDrawer({ node, isOpen, onClose, onDeleteNode }: NodeDrawerPr
       isOpen={isOpen}
       onClose={onClose}
       position="left"
-      mode="push"
+      mode="overlay"
       title={node ? `${node.type}: ${node.name}` : undefined}
     >
       {node && (

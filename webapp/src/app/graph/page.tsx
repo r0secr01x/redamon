@@ -32,9 +32,26 @@ export default function GraphPage() {
   const [gvmStats, setGvmStats] = useState<{ totalGvmNodes: number; nodesByType: Record<string, number> } | null>(null)
   const [isGvmModalOpen, setIsGvmModalOpen] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
 
   const { selectedNode, drawerOpen, selectNode, clearSelection } = useNodeSelection()
   const dimensions = useDimensions(contentRef)
+
+  // Track .body position for fixed-position log drawers
+  useEffect(() => {
+    const body = bodyRef.current
+    if (!body) return
+    const update = () => {
+      const rect = body.getBoundingClientRect()
+      document.documentElement.style.setProperty('--drawer-top', `${rect.top}px`)
+      document.documentElement.style.setProperty('--drawer-bottom', `${window.innerHeight - rect.bottom}px`)
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(body)
+    window.addEventListener('resize', update)
+    return () => { ro.disconnect(); window.removeEventListener('resize', update) }
+  }, [])
   const { isDark } = useTheme()
   const { sessionId, resetSession } = useSession()
 
@@ -347,7 +364,7 @@ export default function GraphPage() {
         isGithubHuntLogsOpen={activeLogsDrawer === 'githubHunt'}
       />
 
-      <div className={styles.body}>
+      <div ref={bodyRef} className={styles.body}>
         <NodeDrawer
           node={selectedNode}
           isOpen={drawerOpen}
@@ -369,51 +386,45 @@ export default function GraphPage() {
             onNodeClick={selectNode}
             isDark={isDark}
           />
-
         </div>
 
-        {activeLogsDrawer === 'recon' && (
-          <ReconLogsDrawer
-            isOpen
-            onClose={() => setActiveLogsDrawer(null)}
-            logs={reconLogs}
-            currentPhase={currentPhase}
-            currentPhaseNumber={currentPhaseNumber}
-            status={reconState?.status || 'idle'}
-            onClearLogs={clearLogs}
-          />
-        )}
-
-        {activeLogsDrawer === 'gvm' && (
-          <ReconLogsDrawer
-            isOpen
-            onClose={() => setActiveLogsDrawer(null)}
-            logs={gvmLogs}
-            currentPhase={gvmCurrentPhase}
-            currentPhaseNumber={gvmCurrentPhaseNumber}
-            status={gvmState?.status || 'idle'}
-            onClearLogs={clearGvmLogs}
-            title="GVM Vulnerability Scan Logs"
-            phases={GVM_PHASES}
-            totalPhases={4}
-          />
-        )}
-
-        {activeLogsDrawer === 'githubHunt' && (
-          <ReconLogsDrawer
-            isOpen
-            onClose={() => setActiveLogsDrawer(null)}
-            logs={githubHuntLogs}
-            currentPhase={githubHuntCurrentPhase}
-            currentPhaseNumber={githubHuntCurrentPhaseNumber}
-            status={githubHuntState?.status || 'idle'}
-            onClearLogs={clearGithubHuntLogs}
-            title="GitHub Secret Hunt Logs"
-            phases={GITHUB_HUNT_PHASES}
-            totalPhases={3}
-          />
-        )}
       </div>
+
+      <ReconLogsDrawer
+        isOpen={activeLogsDrawer === 'recon'}
+        onClose={() => setActiveLogsDrawer(null)}
+        logs={reconLogs}
+        currentPhase={currentPhase}
+        currentPhaseNumber={currentPhaseNumber}
+        status={reconState?.status || 'idle'}
+        onClearLogs={clearLogs}
+      />
+
+      <ReconLogsDrawer
+        isOpen={activeLogsDrawer === 'gvm'}
+        onClose={() => setActiveLogsDrawer(null)}
+        logs={gvmLogs}
+        currentPhase={gvmCurrentPhase}
+        currentPhaseNumber={gvmCurrentPhaseNumber}
+        status={gvmState?.status || 'idle'}
+        onClearLogs={clearGvmLogs}
+        title="GVM Vulnerability Scan Logs"
+        phases={GVM_PHASES}
+        totalPhases={4}
+      />
+
+      <ReconLogsDrawer
+        isOpen={activeLogsDrawer === 'githubHunt'}
+        onClose={() => setActiveLogsDrawer(null)}
+        logs={githubHuntLogs}
+        currentPhase={githubHuntCurrentPhase}
+        currentPhaseNumber={githubHuntCurrentPhaseNumber}
+        status={githubHuntState?.status || 'idle'}
+        onClearLogs={clearGithubHuntLogs}
+        title="GitHub Secret Hunt Logs"
+        phases={GITHUB_HUNT_PHASES}
+        totalPhases={3}
+      />
 
       <AIAssistantDrawer
         isOpen={isAIOpen}

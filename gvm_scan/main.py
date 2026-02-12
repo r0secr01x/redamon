@@ -18,6 +18,7 @@ Usage:
 import os
 import sys
 import json
+import time
 from pathlib import Path
 from datetime import datetime
 
@@ -285,8 +286,15 @@ def run_vulnerability_scan(
         
         # =====================================================================
         # PHASE 2: Scan Hostnames (one at a time for incremental saving)
+        # Reconnect to GVM to avoid stale socket after long Phase 1 scans
         # =====================================================================
         if scan_targets in ("both", "hostnames_only") and hostnames:
+            if scan_targets == "both" and ips:
+                print("\n[*] Reconnecting to GVM before Phase 2...")
+                scanner.disconnect()
+                time.sleep(30)  # Give GVM time to release resources
+                if not scanner.connect(max_retries=10, retry_interval=15):
+                    raise RuntimeError("Failed to reconnect to GVM before Phase 2")
             hostname_list = list(hostnames)
             print(f"\n[*] PHASE 2: Scanning {len(hostname_list)} hostnames (individually)...")
             print("-" * 50)
