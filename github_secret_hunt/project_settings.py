@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_GITHUB_SETTINGS: dict[str, Any] = {
     'GITHUB_ACCESS_TOKEN': os.getenv('GITHUB_ACCESS_TOKEN', ''),
     'GITHUB_TARGET_ORG': '',
+    'GITHUB_TARGET_REPOS': '',
     'GITHUB_SCAN_MEMBERS': False,
     'GITHUB_SCAN_GISTS': True,
     'GITHUB_SCAN_COMMITS': True,
@@ -54,6 +55,7 @@ def fetch_github_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     # Map camelCase API fields to SCREAMING_SNAKE_CASE
     settings['GITHUB_ACCESS_TOKEN'] = project.get('githubAccessToken', DEFAULT_GITHUB_SETTINGS['GITHUB_ACCESS_TOKEN'])
     settings['GITHUB_TARGET_ORG'] = project.get('githubTargetOrg', DEFAULT_GITHUB_SETTINGS['GITHUB_TARGET_ORG'])
+    settings['GITHUB_TARGET_REPOS'] = project.get('githubTargetRepos', DEFAULT_GITHUB_SETTINGS['GITHUB_TARGET_REPOS'])
     settings['GITHUB_SCAN_MEMBERS'] = project.get('githubScanMembers', DEFAULT_GITHUB_SETTINGS['GITHUB_SCAN_MEMBERS'])
     settings['GITHUB_SCAN_GISTS'] = project.get('githubScanGists', DEFAULT_GITHUB_SETTINGS['GITHUB_SCAN_GISTS'])
     settings['GITHUB_SCAN_COMMITS'] = project.get('githubScanCommits', DEFAULT_GITHUB_SETTINGS['GITHUB_SCAN_COMMITS'])

@@ -29,15 +29,15 @@ DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
     'POST_EXPL_PHASE_TYPE': 'statefull',
 
     # Payload Direction
-    'LHOST': '',       # Empty string = not set (bind payload mode)
-    'LPORT': None,      # None = not set (bind payload mode)
-    'BIND_PORT_ON_TARGET': 4444,
+    'LHOST': '',       # Empty string = not set
+    'LPORT': None,      # None = not set
+    'BIND_PORT_ON_TARGET': None,  # None = not set (agent will ask user)
     'PAYLOAD_USE_HTTPS': False,
 
     # Agent Limits
     'MAX_ITERATIONS': 100,
     'EXECUTION_TRACE_MEMORY_STEPS': 100,
-    'TOOL_OUTPUT_MAX_CHARS': 8000,
+    'TOOL_OUTPUT_MAX_CHARS': 20000,
 
     # Approval Gates
     'REQUIRE_APPROVAL_FOR_EXPLOITATION': True,

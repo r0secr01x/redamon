@@ -506,7 +506,7 @@ class AgentOrchestrator:
                 tool_name=pending_step.get("tool_name", "unknown"),
                 tool_args=json_dumps_safe(pending_step.get("tool_args") or {}),
                 success=pending_step.get("success", False),
-                tool_output=tool_output_raw[:get_setting('TOOL_OUTPUT_MAX_CHARS', 8000)],
+                tool_output=tool_output_raw[:get_setting('TOOL_OUTPUT_MAX_CHARS', 20000)],
             )
             system_prompt = system_prompt + "\n" + output_section
             logger.info(f"[{user_id}/{project_id}/{session_id}] Injected output analysis section for tool: {pending_step.get('tool_name')}")

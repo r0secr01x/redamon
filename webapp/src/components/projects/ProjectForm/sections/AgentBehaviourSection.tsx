@@ -162,12 +162,13 @@ export function AgentBehaviourSection({ data, updateField }: AgentBehaviourSecti
                 <input
                   type="number"
                   className="textInput"
-                  value={data.agentBindPortOnTarget}
-                  onChange={(e) => updateField('agentBindPortOnTarget', parseInt(e.target.value) || 4444)}
+                  value={data.agentBindPortOnTarget || ''}
+                  onChange={(e) => updateField('agentBindPortOnTarget', e.target.value === '' ? null : parseInt(e.target.value))}
                   min={1}
                   max={65535}
+                  placeholder="Empty = ask agent"
                 />
-                <span className={styles.fieldHint}>Used when LPORT is empty</span>
+                <span className={styles.fieldHint}>Leave empty if unsure (agent will ask)</span>
               </div>
             </div>
             <div className={styles.toggleRow}>
@@ -214,7 +215,7 @@ export function AgentBehaviourSection({ data, updateField }: AgentBehaviourSecti
                   type="number"
                   className="textInput"
                   value={data.agentToolOutputMaxChars}
-                  onChange={(e) => updateField('agentToolOutputMaxChars', parseInt(e.target.value) || 8000)}
+                  onChange={(e) => updateField('agentToolOutputMaxChars', parseInt(e.target.value) || 20000)}
                   min={1000}
                 />
                 <span className={styles.fieldHint}>Truncation limit for tool output</span>

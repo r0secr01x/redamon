@@ -283,7 +283,7 @@ FOR (u:BaseURL) ON (u.status_code);
 ---
 
 ### 7. Certificate
-TLS/SSL certificates discovered during HTTP probing. Contains certificate metadata for security analysis.
+TLS/SSL certificates discovered during HTTP probing or GVM scanning. Contains certificate metadata for security analysis.
 
 ```cypher
 (:Certificate {
@@ -296,7 +296,12 @@ TLS/SSL certificates discovered during HTTP probing. Contains certificate metada
     san: ["*.beta80group.it", "beta80group.it"],  // Subject Alternative Names
     cipher: "TLS_AES_128_GCM_SHA256",         // TLS cipher suite
     tls_version: "TLSv1.3",                   // TLS version (if detected)
-    source: "http_probe"                      // Discovery source
+    source: "http_probe",                     // Discovery source ("http_probe" or "gvm")
+
+    // GVM-specific properties (when source = "gvm")
+    serial: "01:AB:CD:...",                   // Certificate serial number
+    sha256_fingerprint: "A1B2C3...",          // SHA-256 fingerprint
+    scan_timestamp: "2026-02-12T23:10:29Z"    // When GVM scan ran
 })
 ```
 
@@ -407,60 +412,119 @@ FOR (t:Technology) ON (t.product);
 ---
 
 ### 10. Vulnerability
-Discovered vulnerabilities from active scanning.
+Discovered vulnerabilities from active scanning. Three sources produce Vulnerability nodes, each with different property sets.
 
+**Common properties (all sources):**
 ```cypher
 (:Vulnerability {
-    id: "sqli-error-based-artists-artist",  // Unique identifier (generated)
-    template_id: "sqli-error-based",        // Scanner template ID
+    id: String,                              // Unique identifier
+    user_id: String,                         // Multi-tenant isolation
+    project_id: String,                      // Multi-tenant isolation
+    source: "nuclei" | "gvm" | "security_check",  // Scanner source
+    name: String,                            // Vulnerability name
+    description: String,                     // Description
+    severity: "critical" | "high" | "medium" | "low" | "info",  // Always lowercase
+    cvss_score: Float,                       // 0.0 to 10.0
+})
+```
+
+**Nuclei-specific properties (source = "nuclei"):**
+```cypher
+(:Vulnerability {
+    // Example
+    id: "sqli-error-based-artists-artist",
+    source: "nuclei",
+    name: "Error based SQL Injection",
+    severity: "critical",
+
+    // Template info
+    template_id: "sqli-error-based",
     template_path: "dast/vulnerabilities/sqli/sqli-error-based.yaml",
     template_url: "https://cloud.projectdiscovery.io/public/sqli-error-based",
-    name: "Error based SQL Injection",
-    description: "Direct SQL Command Injection...",
-    severity: "critical",                    // critical, high, medium, low, info
-    category: "sqli",                        // Vulnerability category
+    category: "sqli",                        // xss, sqli, rce, lfi, ssrf, exposure, etc.
     tags: ["sqli", "error", "dast", "vuln"],
-    authors: ["geeknik", "pdteam"],          // Template authors
-    references: [],                          // Reference URLs
-    
+    authors: ["geeknik", "pdteam"],
+    references: [],
+
     // Classification
-    cwe_ids: ["CWE-89"],                     // CWE identifiers
-    cvss_score: null,                        // CVSS if available
-    cvss_metrics: "",                        // CVSS vector string
-    
+    cwe_ids: ["CWE-89"],
+    cves: ["CVE-2021-12345"],                // Associated CVEs (as property)
+    cvss_metrics: "CVSS:3.1/AV:N/...",
+
     // Attack details
     matched_at: "http://testphp.vulnweb.com/artists.php?artist=3'",
-    matcher_name: "",                        // Specific matcher that triggered
-    matcher_status: true,                    // Whether matcher succeeded
-    extractor_name: "mysql",                 // What was extracted (e.g., db type)
+    matcher_name: "",
+    matcher_status: true,
+    extractor_name: "mysql",
     extracted_results: ["SQL syntax; check the manual..."],
-    
+
     // Request/Response details
     request_type: "http",                    // http, dns, tcp, etc.
     scheme: "http",
     host: "testphp.vulnweb.com",
     port: "80",
     path: "/artists.php",
-    matched_ip: "44.228.249.3",              // IP where vuln was found
-    
+    matched_ip: "44.228.249.3",
+
     // DAST specific
     is_dast_finding: true,
     fuzzing_method: "GET",
     fuzzing_parameter: "artist",
     fuzzing_position: "query",               // query, body, header, path
-    
+
     // Template metadata
-    max_requests: 3,                         // from raw.info.metadata.max-request
-    
+    max_requests: 3,
+
     // Reproduction
     curl_command: "curl -X 'GET' ...",
-    
-    // Raw request/response (for evidence & reproduction)
     raw_request: "GET /artists.php?artist=3' HTTP/1.1\nHost: ...",
     raw_response: "HTTP/1.1 200 OK\nConnection: close\n...",
-    
-    // Metadata
-    discovered_at: datetime
+
+    // Timestamp
+    timestamp: datetime,
+    discovered_at: datetime,
+})
+```
+
+**GVM-specific properties (source = "gvm"):**
+```cypher
+(:Vulnerability {
+    // Example
+    id: "gvm-1.3.6.1.4.1.25623.1.0.11213-15.160.68.117-8080",
+    source: "gvm",
+    name: "HTTP Debugging Methods (TRACE/TRACK) Enabled",
+    severity: "medium",
+
+    // OpenVAS NVT info
+    oid: "1.3.6.1.4.1.25623.1.0.11213",     // NVT Object Identifier
+    family: "Web Servers",                    // NVT family
+    threat: "Medium",                         // GVM threat level
+
+    // Target info
+    target_ip: "15.160.68.117",
+    target_port: 8080,
+    target_hostname: "ec2-15-160-68-117.eu-south-1.compute.amazonaws.com",
+    port_protocol: "tcp",
+
+    // Remediation
+    solution: "Disable the TRACE and TRACK methods...",
+    solution_type: "Mitigation",
+    cvss_vector: "AV:N/AC:M/Au:N/C:P/I:P/A:N",
+
+    // Detection quality
+    qod: 99,                                  // Quality of Detection (0-100)
+    qod_type: "remote_vul",                   // Detection method type
+
+    // CVE references (stored as property, no CVE node relationships)
+    cve_ids: ["CVE-2003-1567", "CVE-2004-2320", "..."],
+
+    // CISA & remediation status
+    cisa_kev: false,                          // Listed in CISA Known Exploited Vulnerabilities
+    remediated: false,                        // Marked as closed/patched by GVM re-scan
+
+    // Scanner metadata
+    scanner: "OpenVAS",
+    scan_timestamp: "2026-02-12T23:09:59.655089",
 })
 ```
 
@@ -643,6 +707,82 @@ HTTP response headers (all captured headers).
 
 ---
 
+### 20. Traceroute
+
+**Label:** `Traceroute`
+**Created by:** GVM/OpenVAS scanner (log-level finding)
+**Source:** Network route discovery via ICMP/TCP traceroute
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `target_ip` | String | Target IP address |
+| `scanner_ip` | String | Scanner/source IP address |
+| `hops` | String[] | Ordered list of hop IP addresses (scanner → target) |
+| `distance` | Integer | Number of network hops between scanner and target |
+| `source` | String | Always `"gvm"` |
+| `scan_timestamp` | String | When the GVM scan was performed |
+| `user_id` | String | Tenant user ID |
+| `project_id` | String | Tenant project ID |
+
+**Relationships:**
+```cypher
+(IP)-[:HAS_TRACEROUTE]->(Traceroute)
+```
+
+**Visual:** Circle, dark cyan (#164e63), network layer family.
+
+---
+
+### 21. ExploitGvm
+
+GVM/OpenVAS confirmed active exploitation. Created when a GVM "Active Check" NVT achieves QoD=100, meaning it actually executed a payload and received proof of compromise (e.g., command output showing `uid=0(root)`).
+
+```cypher
+(:ExploitGvm {
+    id: "gvm-exploit-{oid}-{ip}-{port}",       // Deterministic ID
+    user_id: String,                             // Tenant user ID
+    project_id: String,                          // Tenant project ID
+    attack_type: "cve_exploit",                  // Always cve_exploit for GVM
+    severity: "critical",                        // Always critical - confirmed compromise
+    name: "Apache HTTP Server ... - Active Check",
+    target_ip: "15.160.68.117",
+    target_port: 8080,
+    target_hostname: "ec2-...",
+    port_protocol: "tcp",
+    cve_ids: ["CVE-2021-42013"],
+    cisa_kev: true,                              // CISA Known Exploited Vulnerabilities flag
+    description: "By doing the following HTTP request: ... uid=0(root)",
+    evidence: "By doing the following HTTP request: ... uid=0(root)",
+    solution: "Update to version 2.4.52 or later.",
+    oid: "1.3.6.1.4.1.25623.1.0.146871",        // OpenVAS NVT OID
+    family: "Web Servers",
+    qod: 100,                                    // Quality of Detection (always 100)
+    cvss_score: 9.8,
+    cvss_vector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+    source: "gvm",
+    scanner: "OpenVAS",
+    scan_timestamp: "2026-02-12T23:09:59.655089"
+})
+```
+
+**Constraints:**
+```cypher
+CREATE CONSTRAINT exploitgvm_unique IF NOT EXISTS
+FOR (e:ExploitGvm) REQUIRE e.id IS UNIQUE;
+
+CREATE INDEX idx_exploitgvm_tenant IF NOT EXISTS
+FOR (e:ExploitGvm) ON (e.user_id, e.project_id);
+```
+
+**Relationships:**
+```cypher
+(ExploitGvm)-[:EXPLOITED_CVE]->(CVE)   // Only connection — links to the exploited CVE
+```
+
+**Visual:** Diamond shape (same as Exploit), orange-600 color (#ea580c), always-on glow, lightning bolt icon.
+
+---
+
 ---
 
 ## 🔗 Relationships
@@ -700,6 +840,9 @@ HTTP response headers (all captured headers).
 
 // BaseURL has TLS certificate (if HTTPS)
 (BaseURL)-[:HAS_CERTIFICATE]->(Certificate)
+
+// IP has TLS certificate (GVM-discovered, non-HTTP TLS)
+(IP)-[:HAS_CERTIFICATE]->(Certificate)
 
 // BaseURL has HTTP headers
 (BaseURL)-[:HAS_HEADER]->(Header)
@@ -1062,6 +1205,12 @@ RETURN s.name AS host, svc.name AS service, u.url AS url,
 | Capec | capec_id, name, description, likelihood, severity, prerequisites | ✅ Unique |
 | DNSRecord | type, value, ttl | |
 | Header | name, value, baseurl, is_security_header | |
+| Traceroute | target_ip, scanner_ip, hops, distance, source | ✅ Tenant composite |
+| GithubHunt | id, target, scan_start_time, status, repos_scanned, secrets_found | ✅ Unique, ✅ Tenant |
+| GithubRepository | id, name | ✅ Unique, ✅ Tenant |
+| GithubPath | id, repository, path | ✅ Unique, ✅ Tenant |
+| GithubSecret | id, repository, path, secret_type, sample | ✅ Unique, ✅ Tenant |
+| GithubSensitiveFile | id, repository, path, secret_type | ✅ Unique, ✅ Tenant |
 
 ---
 
@@ -1151,6 +1300,9 @@ FOR (dns:DNSRecord) ON (dns.user_id, dns.project_id);
 
 CREATE INDEX idx_header_tenant IF NOT EXISTS
 FOR (h:Header) ON (h.user_id, h.project_id);
+
+CREATE INDEX idx_traceroute_tenant IF NOT EXISTS
+FOR (tr:Traceroute) ON (tr.user_id, tr.project_id);
 
 // =============================================================================
 // ADDITIONAL INDEXES (attribute-based lookups within tenant data)
@@ -1295,10 +1447,180 @@ These are pre-computed for convenience in the JSON but the graph stores the sour
 
 ---
 
+## 🕵️ GitHub Intelligence Nodes
+
+GitHub Secret Hunt findings are stored in a 5-level node hierarchy linked to the Domain root.
+Only `SECRET` and `SENSITIVE_FILE` findings are ingested; `HIGH_ENTROPY` is excluded (too noisy).
+Findings are deduplicated across commit history (same repo + path + secret_type = one node).
+
+### GithubHunt (Scan Metadata)
+
+```cypher
+(:GithubHunt {
+    id: "github-hunt-<user_id>-<project_id>",
+    user_id: "samgiam",
+    project_id: "first_test",
+    target: "samugit83",
+    scan_start_time: "2026-02-12T23:10:04.193830",
+    scan_end_time: "2026-02-13T02:35:05.335142",
+    duration_seconds: 12301.14,
+    status: "completed",
+    repos_scanned: 16,
+    files_scanned: 15695,
+    commits_scanned: 247,
+    secrets_found: 952,
+    sensitive_files: 18
+})
+```
+
+**Relationship:** `Domain -[:HAS_GITHUB_HUNT]-> GithubHunt`
+
+### GithubRepository (Scanned Repository)
+
+```cypher
+(:GithubRepository {
+    id: "github-repo-<user_id>-<project_id>-<org/repo>",
+    name: "samugit83/ai-superagent",
+    user_id: "samgiam",
+    project_id: "first_test"
+})
+```
+
+**Relationship:** `GithubHunt -[:HAS_REPOSITORY]-> GithubRepository`
+
+### GithubPath (File Path Within Repository)
+
+Groups all findings from the same file path together.
+
+```cypher
+(:GithubPath {
+    id: "github-path-<user_id>-<project_id>-<hash>",
+    user_id: "samgiam",
+    project_id: "first_test",
+    repository: "samugit83/ai-superagent",
+    path: "websocket_server/.env"
+})
+```
+
+**Relationship:** `GithubRepository -[:HAS_PATH]-> GithubPath`
+
+### GithubSecret (Leaked Secret Finding)
+
+Leaf node for `type: "SECRET"` findings — API keys, credentials, tokens, connection strings.
+
+```cypher
+(:GithubSecret {
+    id: "github-secret-<user_id>-<project_id>-<hash>",
+    user_id: "samgiam",
+    project_id: "first_test",
+    repository: "samugit83/ai-superagent",
+    path: "websocket_server/.env",
+    secret_type: "Twilio Account SID",
+    timestamp: "2026-02-12T23:10:31.917308",
+    matches: 2,                            // (optional) number of matches
+    sample: "AC5dt8wSP3BQ..."              // (optional) redacted sample
+})
+```
+
+**Relationship:** `GithubPath -[:CONTAINS_SECRET]-> GithubSecret`
+
+### GithubSensitiveFile (Sensitive File Finding)
+
+Leaf node for `type: "SENSITIVE_FILE"` findings — .env files, config files, key files.
+
+```cypher
+(:GithubSensitiveFile {
+    id: "github-sensitivefi-<user_id>-<project_id>-<hash>",
+    user_id: "samgiam",
+    project_id: "first_test",
+    repository: "samugit83/ai-superagent",
+    path: ".env",
+    secret_type: "Environment Configuration File",
+    timestamp: "2026-02-12T23:10:31.917308",
+    matches: 1
+})
+```
+
+**Relationship:** `GithubPath -[:CONTAINS_SENSITIVE_FILE]-> GithubSensitiveFile`
+
+### Full Chain
+
+```
+Domain -[:HAS_GITHUB_HUNT]-> GithubHunt
+    -[:HAS_REPOSITORY]-> GithubRepository
+        -[:HAS_PATH]-> GithubPath
+            -[:CONTAINS_SECRET]-> GithubSecret
+            -[:CONTAINS_SENSITIVE_FILE]-> GithubSensitiveFile
+```
+
+### Constraints & Indexes
+
+```cypher
+CREATE CONSTRAINT githubhunt_unique IF NOT EXISTS
+FOR (gh:GithubHunt) REQUIRE gh.id IS UNIQUE;
+
+CREATE CONSTRAINT githubrepo_unique IF NOT EXISTS
+FOR (gr:GithubRepository) REQUIRE gr.id IS UNIQUE;
+
+CREATE CONSTRAINT githubpath_unique IF NOT EXISTS
+FOR (gp:GithubPath) REQUIRE gp.id IS UNIQUE;
+
+CREATE CONSTRAINT githubsecret_unique IF NOT EXISTS
+FOR (gs:GithubSecret) REQUIRE gs.id IS UNIQUE;
+
+CREATE CONSTRAINT githubsensitivefile_unique IF NOT EXISTS
+FOR (gsf:GithubSensitiveFile) REQUIRE gsf.id IS UNIQUE;
+
+CREATE INDEX idx_githubhunt_tenant IF NOT EXISTS
+FOR (gh:GithubHunt) ON (gh.user_id, gh.project_id);
+
+CREATE INDEX idx_githubrepo_tenant IF NOT EXISTS
+FOR (gr:GithubRepository) ON (gr.user_id, gr.project_id);
+
+CREATE INDEX idx_githubpath_tenant IF NOT EXISTS
+FOR (gp:GithubPath) ON (gp.user_id, gp.project_id);
+
+CREATE INDEX idx_githubsecret_tenant IF NOT EXISTS
+FOR (gs:GithubSecret) ON (gs.user_id, gs.project_id);
+
+CREATE INDEX idx_githubsensitivefile_tenant IF NOT EXISTS
+FOR (gsf:GithubSensitiveFile) ON (gsf.user_id, gsf.project_id);
+```
+
+### Example Queries
+
+```cypher
+// Full chain: all GitHub findings for a project
+MATCH (d:Domain {user_id: $userId, project_id: $projectId})
+      -[:HAS_GITHUB_HUNT]->(gh:GithubHunt)
+      -[:HAS_REPOSITORY]->(gr:GithubRepository)
+      -[:HAS_PATH]->(gp:GithubPath)
+OPTIONAL MATCH (gp)-[:CONTAINS_SECRET]->(gs:GithubSecret)
+OPTIONAL MATCH (gp)-[:CONTAINS_SENSITIVE_FILE]->(gsf:GithubSensitiveFile)
+RETURN gr.name AS repository, gp.path AS path, gs.secret_type AS secret, gsf.secret_type AS sensitive_file
+
+// Only leaked secrets (API keys, credentials, tokens)
+MATCH (gs:GithubSecret {user_id: $userId, project_id: $projectId})
+RETURN gs.repository, gs.secret_type, gs.path, gs.sample
+
+// Only sensitive files (.env, config, key files)
+MATCH (gsf:GithubSensitiveFile {user_id: $userId, project_id: $projectId})
+RETURN gsf.repository, gsf.secret_type, gsf.path
+
+// Count findings per repository
+MATCH (gr:GithubRepository {user_id: $userId, project_id: $projectId})
+      -[:HAS_PATH]->(gp:GithubPath)
+OPTIONAL MATCH (gp)-[:CONTAINS_SECRET]->(gs:GithubSecret)
+OPTIONAL MATCH (gp)-[:CONTAINS_SENSITIVE_FILE]->(gsf:GithubSensitiveFile)
+WITH gr, count(gs) AS secrets, count(gsf) AS sensitive_files
+RETURN gr.name AS repo, secrets, sensitive_files ORDER BY secrets + sensitive_files DESC
+```
+
+---
+
 ## 🔮 Future Extensions (Not Implemented Yet)
-- GVMScan, GVMVulnerability, DetectedProduct, Traceroute, OSFingerprint nodes (GVM integration - designed but not yet created by code; GVM vulns currently stored as Vulnerability nodes with source="gvm")
+- GVMScan, GVMVulnerability, DetectedProduct, OSFingerprint nodes (GVM integration - designed but not yet created by code; GVM vulns currently stored as Vulnerability nodes with source="gvm"; Traceroute nodes now implemented)
 - `AttackChain` nodes linking vulnerabilities into exploitable paths
 - `Credential` nodes for discovered credentials
-- `GitHubSecret` nodes for leaked secrets
 - `Screenshot` nodes linking to stored images
 - `ScanSession` nodes for tracking multiple scan runs

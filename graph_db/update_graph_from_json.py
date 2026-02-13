@@ -43,15 +43,19 @@ from graph_db import Neo4jClient
 #   - "resource_enum"    : Updates Endpoint, Parameter, Form nodes (from Katana crawl)
 #   - "vuln_scan"        : Updates Vulnerability, CVE, MitreData, Capec nodes (Nuclei DAST)
 #   - "gvm_scan"         : Updates Vulnerability, CVE nodes (GVM/OpenVAS infrastructure scan)
+#   - "github_hunt"      : Updates GithubHunt, GithubRepository, GithubFinding nodes
 #
 # Set to list of modules to run, or empty list [] to run ALL modules
-UPDATE_MODULES = []  # Empty = run all, or specify: ["domain_discovery", "port_scan", "http_probe", "resource_enum", "vuln_scan", "gvm_scan"]
+UPDATE_MODULES = []  # Empty = run all, or specify: ["domain_discovery", "port_scan", "http_probe", "resource_enum", "vuln_scan", "gvm_scan", "github_hunt"]
 
 # Path to recon JSON file (None = auto-detect from TARGET_DOMAIN)
 RECON_JSON_PATH = None  # Example: "/path/to/recon_vulnweb.com.json"
 
 # Path to GVM JSON file (None = auto-detect from TARGET_DOMAIN)
 GVM_JSON_PATH = None  # Example: "/path/to/gvm_vulnweb.com.json"
+
+# Path to GitHub Hunt JSON file (None = auto-detect from PROJECT_ID)
+GITHUB_HUNT_JSON_PATH = None  # Example: "/path/to/github_hunt_project123.json"
 
 # Override user/project IDs (None = use from params.py)
 OVERRIDE_USER_ID = None
@@ -69,10 +73,11 @@ UPDATE_FUNCTION_MAP = {
     "resource_enum": "update_graph_from_resource_enum",
     "vuln_scan": "update_graph_from_vuln_scan",
     "gvm_scan": "update_graph_from_gvm_scan",
+    "github_hunt": "update_graph_from_github_hunt",
 }
 
-# Ordered execution (dependencies: domain_discovery should run first, gvm_scan last)
-UPDATE_ORDER = ["domain_discovery", "port_scan", "http_probe", "resource_enum", "vuln_scan", "gvm_scan"]
+# Ordered execution (dependencies: domain_discovery should run first, github_hunt last)
+UPDATE_ORDER = ["domain_discovery", "port_scan", "http_probe", "resource_enum", "vuln_scan", "gvm_scan", "github_hunt"]
 
 
 def load_recon_json(json_path: Path) -> dict:
@@ -111,12 +116,31 @@ def load_gvm_json(json_path: Path) -> dict:
         return json.load(f)
 
 
+def get_github_hunt_file_path(project_id: str) -> Path:
+    """Get the path to the GitHub Hunt JSON file for a project.
+
+    Args:
+        project_id: Project ID used in the filename
+    """
+    return PROJECT_ROOT / "github_secret_hunt" / "output" / f"github_hunt_{project_id}.json"
+
+
+def load_github_hunt_json(json_path: Path) -> dict:
+    """Load GitHub Hunt scan JSON file."""
+    if not json_path.exists():
+        return None  # GitHub Hunt is optional
+
+    with open(json_path, 'r') as f:
+        return json.load(f)
+
+
 def run_graph_updates(
     recon_data: dict,
     user_id: str,
     project_id: str,
     modules: list = None,
-    gvm_data: dict = None
+    gvm_data: dict = None,
+    github_hunt_data: dict = None
 ) -> dict:
     """
     Run graph database updates for specified modules.
@@ -127,6 +151,7 @@ def run_graph_updates(
         project_id: Project identifier for multi-tenant isolation
         modules: List of modules to update, or None/[] for all modules
         gvm_data: The GVM scan JSON data (optional, for gvm_scan module)
+        github_hunt_data: The GitHub Hunt JSON data (optional, for github_hunt module)
 
     Returns:
         Dictionary with stats for each module
@@ -168,6 +193,8 @@ def run_graph_updates(
         available_data.append("vuln_scan")
     if gvm_data and gvm_data.get("scans"):
         available_data.append("gvm_scan")
+    if github_hunt_data and github_hunt_data.get("findings"):
+        available_data.append("github_hunt")
 
     print(f"[*] Data available: {', '.join(available_data) if available_data else 'None'}")
     print()
@@ -203,9 +230,11 @@ def run_graph_updates(
                 print("-" * 40)
 
                 try:
-                    # GVM scan uses separate gvm_data instead of recon_data
+                    # GVM and GitHub Hunt use separate data sources
                     if module == "gvm_scan":
                         stats = update_func(gvm_data, user_id, project_id)
+                    elif module == "github_hunt":
+                        stats = update_func(github_hunt_data, user_id, project_id)
                     else:
                         stats = update_func(recon_data, user_id, project_id)
                     results["modules"][module] = {
@@ -326,12 +355,35 @@ def main():
     else:
         print(f"[*] No GVM data found at: {gvm_path} (optional)")
 
+    # Load GitHub Hunt JSON file (optional)
+    if GITHUB_HUNT_JSON_PATH:
+        github_hunt_path = Path(GITHUB_HUNT_JSON_PATH)
+    else:
+        github_hunt_path = get_github_hunt_file_path(project_id)
+
+    github_hunt_data = None
+    if github_hunt_path.exists():
+        print(f"[*] Loading GitHub Hunt data from: {github_hunt_path}")
+        try:
+            github_hunt_data = load_github_hunt_json(github_hunt_path)
+            if github_hunt_data:
+                print(f"[+] Loaded GitHub Hunt JSON successfully")
+                print(f"[*] GitHub Hunt target: {github_hunt_data.get('target', 'unknown')}")
+                findings_count = len(github_hunt_data.get("findings", []))
+                print(f"[*] GitHub Hunt findings: {findings_count}")
+        except json.JSONDecodeError as e:
+            print(f"[!] Error parsing GitHub Hunt JSON: {e}")
+            github_hunt_data = None
+    else:
+        print(f"[*] No GitHub Hunt data found at: {github_hunt_path} (optional)")
+
     # Run updates
     results = run_graph_updates(
         recon_data=recon_data,
         user_id=user_id,
         project_id=project_id,
         gvm_data=gvm_data,
+        github_hunt_data=github_hunt_data,
         modules=UPDATE_MODULES if UPDATE_MODULES else None
     )
 

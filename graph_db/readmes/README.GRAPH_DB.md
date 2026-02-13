@@ -21,7 +21,7 @@ Configured via root `.env` file:
 
 ## Configuration
 
-The graph is automatically populated after each recon scan phase completes. Graph updates are controlled by the `UPDATE_GRAPH_DB` setting in the project configuration.
+The graph is automatically populated after each recon scan phase completes. Graph updates are controlled by the `UPDATE_GRAPH_DB` setting in the project configuration. GitHub Secret Hunt results are also ingested into the graph after scan completion.
 
 ## Docker Commands
 
@@ -158,7 +158,8 @@ UPDATE_MODULES = ["domain_discovery", "port_scan", "http_probe", "vuln_scan"]
 | `port_scan` | Port, Service | HAS_PORT, RUNS_SERVICE |
 | `http_probe` | BaseURL, Technology, Header | SERVES_URL, USES_TECHNOLOGY, HAS_HEADER |
 | `vuln_scan` | Endpoint, Parameter, Vulnerability | HAS_ENDPOINT, HAS_PARAMETER, HAS_VULNERABILITY, FOUND_AT, AFFECTS_PARAMETER |
-| `gvm_scan` | Vulnerability, CVE | HAS_VULNERABILITY (from IP/Subdomain), HAS_CVE |
+| `gvm_scan` | Vulnerability, Traceroute, Certificate, ExploitGvm | HAS_VULNERABILITY, HAS_TRACEROUTE, HAS_CERTIFICATE, EXPLOITED_CVE |
+| `github_hunt` | GithubHunt, GithubRepository, GithubPath, GithubSecret, GithubSensitiveFile | HAS_GITHUB_HUNT, HAS_REPOSITORY, HAS_PATH, CONTAINS_SECRET, CONTAINS_SENSITIVE_FILE |
 
 ### Use Cases
 
@@ -292,11 +293,8 @@ The `gvm_scan` module imports vulnerability findings from GVM/OpenVAS infrastruc
 -- GVM vulnerabilities linked to Subdomain (if hostname matches)
 (:Subdomain)-[:HAS_VULNERABILITY]->(:Vulnerability {source: "gvm"})
 
--- GVM vulnerability to CVE enrichment
-(:Vulnerability {source: "gvm"})-[:HAS_CVE]->(:CVE)
-
--- CVE to CWE/CAPEC chain (shared with technology_cves)
-(:CVE)-[:HAS_CWE]->(:MitreData)-[:HAS_CAPEC]->(:Capec)
+-- GVM confirmed exploits linked to CVE
+(:ExploitGvm)-[:EXPLOITED_CVE]->(:CVE)
 ```
 
 ### GVM Graph Visualization
@@ -308,23 +306,18 @@ The `gvm_scan` module imports vulnerability findings from GVM/OpenVAS infrastruc
            |
            v
     ┌─────────────────┐
-    │  Vulnerability  │  (source: "gvm")
+    │  Vulnerability  │  (source: "gvm", cve_ids property)
     │  OID, severity  │
-    └────────┬────────┘
-             │ HAS_CVE
-    ┌────────▼────────┐
-    │      CVE        │  (shared with technology_cves)
-    │ CVE-2011-3389   │
-    └────────┬────────┘
-             │ HAS_CWE
-    ┌────────▼────────┐
-    │    MitreData    │
-    │    CWE-327      │
-    └────────┬────────┘
-             │ HAS_CAPEC
-    ┌────────▼────────┐
-    │     Capec       │
-    │   CAPEC-217     │
+    └─────────────────┘
+
+     ExploitGvm (QoD=100)
+           |
+     EXPLOITED_CVE
+           |
+           v
+    ┌─────────────────┐
+    │      CVE        │
+    │ CVE-2021-42013  │
     └─────────────────┘
 ```
 
@@ -333,26 +326,61 @@ The `gvm_scan` module imports vulnerability findings from GVM/OpenVAS infrastruc
 ```cypher
 -- Find all GVM vulnerabilities
 MATCH (v:Vulnerability {source: "gvm"})
-RETURN v.name, v.severity, v.target_ip, v.target_port
+RETURN v.name, v.severity, v.target_ip, v.target_port, v.cve_ids
 ORDER BY v.cvss_score DESC
-
--- Find GVM vulnerabilities with CVE enrichment
-MATCH (v:Vulnerability {source: "gvm"})-[:HAS_CVE]->(c:CVE)
-RETURN v.name, v.severity, collect(c.id) AS cves
 
 -- Find all vulnerabilities affecting an IP (any source)
 MATCH (i:IP {address: "44.228.249.3"})-[:HAS_VULNERABILITY]->(v:Vulnerability)
 RETURN v.source, v.name, v.severity
-
--- Find GVM vulnerabilities with full MITRE chain
-MATCH (v:Vulnerability {source: "gvm"})-[:HAS_CVE]->(c:CVE)-[:HAS_CWE]->(cwe:MitreData)-[:HAS_CAPEC]->(cap:Capec)
-RETURN v.name, c.id AS cve, cwe.cwe_id AS cwe, cap.capec_id AS capec
 
 -- Count vulnerabilities by source
 MATCH (v:Vulnerability)
 RETURN v.source, count(v) AS count,
        collect(DISTINCT v.severity) AS severities
 ORDER BY count DESC
+```
+
+### Traceroute Data
+
+GVM extracts network route information from log-level Traceroute findings and stores them as `Traceroute` nodes linked to the target IP.
+
+```cypher
+-- Find traceroute to a target IP
+MATCH (i:IP)-[:HAS_TRACEROUTE]->(tr:Traceroute)
+RETURN i.address, tr.scanner_ip, tr.hops, tr.distance
+
+-- Find targets with high network distance
+MATCH (tr:Traceroute)
+WHERE tr.distance > 5
+RETURN tr.target_ip, tr.distance, tr.hops
+```
+
+### CISA KEV & Remediation
+
+GVM flags vulnerabilities that are listed in the CISA Known Exploited Vulnerabilities (KEV) catalog, and tracks CVEs that have been remediated between scans.
+
+```cypher
+-- Find CISA KEV vulnerabilities (known weaponized)
+MATCH (v:Vulnerability {cisa_kev: true})
+RETURN v.name, v.severity, v.cve_ids, v.target_ip
+
+-- Find remediated vulnerabilities (from closed_cves)
+MATCH (v:Vulnerability {remediated: true})
+RETURN v.name, v.cve_ids
+```
+
+### GVM Confirmed Exploits (ExploitGvm)
+
+When GVM active checks achieve QoD=100 (confirmed exploitation with proof), they create `ExploitGvm` nodes instead of `Vulnerability` nodes. These represent confirmed compromises with actual payload execution evidence.
+
+```cypher
+-- Find GVM confirmed exploits
+MATCH (e:ExploitGvm)-[:EXPLOITED_CVE]->(c:CVE)
+RETURN e.name, e.severity, c.id, e.target_ip, e.evidence
+
+-- Find all confirmed compromises (both AI agent and GVM)
+MATCH (e) WHERE e:Exploit OR e:ExploitGvm
+RETURN labels(e)[0] as source, e.name, e.target_ip, e.cve_ids
 ```
 
 ### GVM Data File

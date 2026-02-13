@@ -288,6 +288,13 @@ class Neo4jClient:
             "CREATE CONSTRAINT capec_unique IF NOT EXISTS FOR (cap:Capec) REQUIRE cap.capec_id IS UNIQUE",
             "CREATE CONSTRAINT vulnerability_unique IF NOT EXISTS FOR (v:Vulnerability) REQUIRE v.id IS UNIQUE",
             "CREATE CONSTRAINT exploit_unique IF NOT EXISTS FOR (e:Exploit) REQUIRE e.id IS UNIQUE",
+            "CREATE CONSTRAINT exploitgvm_unique IF NOT EXISTS FOR (e:ExploitGvm) REQUIRE e.id IS UNIQUE",
+            # GitHub Secret Hunt constraints
+            "CREATE CONSTRAINT githubhunt_unique IF NOT EXISTS FOR (gh:GithubHunt) REQUIRE gh.id IS UNIQUE",
+            "CREATE CONSTRAINT githubrepo_unique IF NOT EXISTS FOR (gr:GithubRepository) REQUIRE gr.id IS UNIQUE",
+            "CREATE CONSTRAINT githubpath_unique IF NOT EXISTS FOR (gp:GithubPath) REQUIRE gp.id IS UNIQUE",
+            "CREATE CONSTRAINT githubsecret_unique IF NOT EXISTS FOR (gs:GithubSecret) REQUIRE gs.id IS UNIQUE",
+            "CREATE CONSTRAINT githubsensitivefile_unique IF NOT EXISTS FOR (gsf:GithubSensitiveFile) REQUIRE gsf.id IS UNIQUE",
         ]
 
         # Tenant composite indexes
@@ -304,6 +311,13 @@ class Neo4jClient:
             "CREATE INDEX idx_parameter_tenant IF NOT EXISTS FOR (p:Parameter) ON (p.user_id, p.project_id)",
             "CREATE INDEX idx_vulnerability_tenant IF NOT EXISTS FOR (v:Vulnerability) ON (v.user_id, v.project_id)",
             "CREATE INDEX idx_exploit_tenant IF NOT EXISTS FOR (e:Exploit) ON (e.user_id, e.project_id)",
+            "CREATE INDEX idx_exploitgvm_tenant IF NOT EXISTS FOR (e:ExploitGvm) ON (e.user_id, e.project_id)",
+            # GitHub Secret Hunt tenant indexes
+            "CREATE INDEX idx_githubhunt_tenant IF NOT EXISTS FOR (gh:GithubHunt) ON (gh.user_id, gh.project_id)",
+            "CREATE INDEX idx_githubrepo_tenant IF NOT EXISTS FOR (gr:GithubRepository) ON (gr.user_id, gr.project_id)",
+            "CREATE INDEX idx_githubpath_tenant IF NOT EXISTS FOR (gp:GithubPath) ON (gp.user_id, gp.project_id)",
+            "CREATE INDEX idx_githubsecret_tenant IF NOT EXISTS FOR (gs:GithubSecret) ON (gs.user_id, gs.project_id)",
+            "CREATE INDEX idx_githubsensitivefile_tenant IF NOT EXISTS FOR (gsf:GithubSensitiveFile) ON (gsf.user_id, gsf.project_id)",
         ]
 
         # Additional indexes
@@ -330,6 +344,10 @@ class Neo4jClient:
             "CREATE INDEX idx_capec_tenant IF NOT EXISTS FOR (c:Capec) ON (c.user_id, c.project_id)",
             # Exploit indexes
             "CREATE INDEX idx_exploit_type IF NOT EXISTS FOR (e:Exploit) ON (e.attack_type)",
+            # GitHub Secret Hunt indexes
+            "CREATE INDEX idx_githubrepo_name IF NOT EXISTS FOR (gr:GithubRepository) ON (gr.name)",
+            "CREATE INDEX idx_githubpath_path IF NOT EXISTS FOR (gp:GithubPath) ON (gp.path)",
+            "CREATE INDEX idx_githubsecret_secret_type IF NOT EXISTS FOR (gs:GithubSecret) ON (gs.secret_type)",
         ]
 
         for query in constraints + tenant_indexes + additional_indexes:
@@ -401,6 +419,9 @@ class Neo4jClient:
             "cves_deleted": 0,
             "technologies_deleted": 0,
             "technologies_cleaned": 0,
+            "traceroutes_deleted": 0,
+            "certificates_deleted": 0,
+            "exploits_gvm_deleted": 0,
             "relationships_deleted": 0,
         }
 
@@ -419,14 +440,50 @@ class Neo4jClient:
             if record:
                 stats["vulnerabilities_deleted"] = record["deleted"]
 
-            # 2. Delete GVM-only CVE nodes (not linked to any non-GVM vulnerability)
+            # 1b. Delete Traceroute nodes
+            result = session.run(
+                """
+                MATCH (tr:Traceroute {user_id: $uid, project_id: $pid})
+                DETACH DELETE tr
+                RETURN count(tr) as deleted
+                """,
+                uid=user_id, pid=project_id
+            )
+            record = result.single()
+            if record:
+                stats["traceroutes_deleted"] = record["deleted"]
+
+            # 1c. Delete GVM-sourced Certificate nodes (preserve recon/httpx certificates)
+            result = session.run(
+                """
+                MATCH (c:Certificate {project_id: $pid})
+                WHERE c.source = 'gvm'
+                DETACH DELETE c
+                RETURN count(c) as deleted
+                """,
+                pid=project_id
+            )
+            record = result.single()
+            if record:
+                stats["certificates_deleted"] = record["deleted"]
+
+            # 1d. Delete ExploitGvm nodes
+            result = session.run(
+                """
+                MATCH (e:ExploitGvm {user_id: $uid, project_id: $pid})
+                DETACH DELETE e
+                RETURN count(e) as deleted
+                """,
+                uid=user_id, pid=project_id
+            )
+            record = result.single()
+            if record:
+                stats["exploits_gvm_deleted"] = record["deleted"]
+
+            # 2. Delete GVM-only CVE nodes (created by ExploitGvm, not linked to non-GVM sources)
             result = session.run(
                 """
                 MATCH (c:CVE {user_id: $uid, project_id: $pid, source: 'gvm'})
-                WHERE NOT EXISTS {
-                    MATCH (v:Vulnerability)-[:HAS_CVE]->(c)
-                    WHERE v.source <> 'gvm'
-                }
                 DETACH DELETE c
                 RETURN count(c) as deleted
                 """,
@@ -490,7 +547,9 @@ class Neo4jClient:
             )
 
             total = (stats["vulnerabilities_deleted"] + stats["cves_deleted"] +
-                     stats["technologies_deleted"] + stats["relationships_deleted"])
+                     stats["technologies_deleted"] + stats["traceroutes_deleted"] +
+                     stats["certificates_deleted"] + stats["exploits_gvm_deleted"] +
+                     stats["relationships_deleted"])
             print(f"[*] Cleared GVM data: {total} items removed, "
                   f"{stats['technologies_cleaned']} shared technologies cleaned")
 
@@ -1760,6 +1819,7 @@ class Neo4jClient:
                             "id": vuln_id,
                             "user_id": user_id,
                             "project_id": project_id,
+                            "source": "nuclei",
                             "template_id": template_id,
                             "template_path": finding.get("template_path"),
                             "template_url": raw.get("template-url"),
@@ -3039,6 +3099,44 @@ class Neo4jClient:
                 )
             stats["relationships_created"] += 1
 
+    @staticmethod
+    def _parse_traceroute(description: str) -> dict:
+        """
+        Parse a GVM Traceroute description into structured data.
+
+        Expected format:
+            Network route from scanner (172.20.0.4) to target (15.160.68.117):
+
+            172.20.0.4
+            192.168.1.1
+            ...
+            15.160.68.117
+
+            Network distance between scanner and target: 7
+        """
+        import re
+
+        result = {"scanner_ip": "", "target_ip": "", "hops": [], "distance": 0}
+
+        # Extract scanner and target IPs from header line
+        header_match = re.search(
+            r"Network route from scanner \(([^)]+)\) to target \(([^)]+)\)", description
+        )
+        if header_match:
+            result["scanner_ip"] = header_match.group(1)
+            result["target_ip"] = header_match.group(2)
+
+        # Extract distance from footer line
+        dist_match = re.search(r"Network distance between scanner and target:\s*(\d+)", description)
+        if dist_match:
+            result["distance"] = int(dist_match.group(1))
+
+        # Extract hop IPs (lines that look like IP addresses)
+        ip_pattern = re.compile(r"^\s*(\d{1,3}(?:\.\d{1,3}){3})\s*$", re.MULTILINE)
+        result["hops"] = ip_pattern.findall(description)
+
+        return result
+
     def update_graph_from_gvm_scan(self, gvm_data: dict, user_id: str, project_id: str) -> dict:
         """
         Update the Neo4j graph database with GVM/OpenVAS vulnerability scan data.
@@ -3047,12 +3145,11 @@ class Neo4jClient:
         - Technology nodes (from GVM product/service/OS detections via CPE)
         - Port nodes (MERGE'd for port-specific technologies)
         - Vulnerability nodes (from GVM findings with source="gvm")
-        - CVE nodes (extracted from GVM findings)
+        - Traceroute nodes (from log-level Traceroute findings)
 
         Relationships (preferred chain):
         - Port -[:USES_TECHNOLOGY {detected_by: 'gvm'}]-> Technology
         - Technology -[:HAS_VULNERABILITY]-> Vulnerability
-        - Vulnerability -[:HAS_CVE]-> CVE
 
         Fallback relationships:
         - IP -[:USES_TECHNOLOGY]-> Technology (for OS-level tech with no port)
@@ -3078,6 +3175,11 @@ class Neo4jClient:
             "mitre_nodes": 0,
             "capec_nodes": 0,
             "technologies_created": 0,
+            "traceroutes_created": 0,
+            "exploits_gvm_created": 0,
+            "cisa_kev_count": 0,
+            "closed_cves_processed": 0,
+            "certificates_created": 0,
             "relationships_created": 0,
             "errors": []
         }
@@ -3153,8 +3255,9 @@ class Neo4jClient:
                         solution_text = solution_data.get("#text", "") if isinstance(solution_data, dict) else ""
                         solution_type = solution_data.get("@type", "") if isinstance(solution_data, dict) else ""
 
-                        # Extract CVE IDs from refs
+                        # Extract CVE IDs and CISA KEV flag from refs
                         cve_ids = vuln.get("cves_extracted", [])
+                        cisa_kev = False
                         refs = nvt.get("refs", {})
                         if refs:
                             ref_list = refs.get("ref", [])
@@ -3165,8 +3268,78 @@ class Neo4jClient:
                                     cve_id = ref.get("@id", "")
                                     if cve_id and cve_id not in cve_ids:
                                         cve_ids.append(cve_id)
+                                elif ref.get("@type") == "cisa":
+                                    cisa_kev = True
 
-                        # Create Vulnerability node
+                        # Check QoD — if 100, this is a confirmed active exploit
+                        qod_value = int(qod_data.get("value", 0)) if qod_data.get("value") else 0
+
+                        if qod_value == 100:
+                            # Confirmed active exploit — create ExploitGvm node instead of Vulnerability
+                            exploit_id = f"gvm-exploit-{oid}-{target_ip}-{target_port or 'general'}"
+
+                            exploit_props = {
+                                "id": exploit_id,
+                                "user_id": user_id,
+                                "project_id": project_id,
+                                "attack_type": "cve_exploit",
+                                "severity": "critical",
+                                "name": nvt.get("name", vuln.get("name", "")),
+                                "target_ip": target_ip,
+                                "target_port": target_port,
+                                "target_hostname": target_hostname,
+                                "port_protocol": port_protocol,
+                                "cve_ids": cve_ids,
+                                "cisa_kev": cisa_kev,
+                                "description": vuln.get("description", ""),
+                                "evidence": vuln.get("description", ""),
+                                "solution": solution_text,
+                                "oid": oid,
+                                "family": nvt.get("family", ""),
+                                "qod": qod_value,
+                                "cvss_score": cvss_score,
+                                "cvss_vector": cvss_vector,
+                                "source": "gvm",
+                                "scanner": "OpenVAS",
+                                "scan_timestamp": scan_timestamp,
+                            }
+                            exploit_props = {k: v for k, v in exploit_props.items() if v is not None}
+
+                            session.run(
+                                """
+                                MERGE (e:ExploitGvm {id: $id})
+                                SET e += $props, e.updated_at = datetime()
+                                """,
+                                id=exploit_id, props=exploit_props
+                            )
+                            stats["exploits_gvm_created"] += 1
+                            if cisa_kev:
+                                stats["cisa_kev_count"] += 1
+
+                            # Link ExploitGvm → CVE (only connection)
+                            # MERGE CVE node — creates it if not found from previous scan
+                            for cve_id_link in cve_ids:
+                                severity_label = "CRITICAL" if cvss_score >= 9.0 else "HIGH" if cvss_score >= 7.0 else "MEDIUM" if cvss_score >= 4.0 else "LOW"
+                                session.run(
+                                    """
+                                    MATCH (e:ExploitGvm {id: $exploit_id})
+                                    MERGE (c:CVE {id: $cve_id})
+                                    ON CREATE SET c.severity = $severity,
+                                                  c.cvss = $cvss,
+                                                  c.source = 'gvm',
+                                                  c.user_id = $uid,
+                                                  c.project_id = $pid
+                                    MERGE (e)-[:EXPLOITED_CVE]->(c)
+                                    """,
+                                    exploit_id=exploit_id, cve_id=cve_id_link,
+                                    severity=severity_label, cvss=cvss_score,
+                                    uid=user_id, pid=project_id
+                                )
+                                stats["cves_linked"] += 1
+
+                            continue  # Skip Vulnerability node creation
+
+                        # Create Vulnerability node (non-exploit findings)
                         vuln_props = {
                             "id": vuln_id,
                             "user_id": user_id,
@@ -3185,9 +3358,10 @@ class Neo4jClient:
                             "target_hostname": target_hostname,
                             "port_protocol": port_protocol,
                             "family": nvt.get("family", ""),
-                            "qod": int(qod_data.get("value", 0)) if qod_data.get("value") else 0,
+                            "qod": qod_value,
                             "qod_type": qod_data.get("type"),
                             "cve_ids": cve_ids,
+                            "cisa_kev": cisa_kev,
                             "source": "gvm",
                             "scanner": "OpenVAS",
                             "scan_timestamp": scan_timestamp,
@@ -3205,6 +3379,8 @@ class Neo4jClient:
                             id=vuln_id, props=vuln_props
                         )
                         stats["vulnerabilities_created"] += 1
+                        if cisa_kev:
+                            stats["cisa_kev_count"] += 1
 
                         # Link Vulnerability to Technology (preferred) or fallback
                         vuln_linked = False
@@ -3297,39 +3473,157 @@ class Neo4jClient:
                                 stats["subdomains_linked"] += 1
                                 stats["relationships_created"] += 1
 
-                        # Process CVEs and create CVE -> CWE -> CAPEC chain
-                        for cve_id in cve_ids:
-                            try:
-                                # MERGE CVE node (reuse if already exists from technology_cves)
-                                session.run(
-                                    """
-                                    MERGE (c:CVE {id: $cve_id})
-                                    ON CREATE SET c.user_id = $user_id,
-                                                  c.project_id = $project_id,
-                                                  c.source = 'gvm',
-                                                  c.created_at = datetime()
-                                    SET c.updated_at = datetime()
-                                    """,
-                                    cve_id=cve_id, user_id=user_id, project_id=project_id
-                                )
-
-                                # Create relationship: Vulnerability -[:HAS_CVE]-> CVE
-                                session.run(
-                                    """
-                                    MATCH (v:Vulnerability {id: $vuln_id})
-                                    MATCH (c:CVE {id: $cve_id})
-                                    MERGE (v)-[:HAS_CVE]->(c)
-                                    """,
-                                    vuln_id=vuln_id, cve_id=cve_id
-                                )
-                                stats["cves_linked"] += 1
-                                stats["relationships_created"] += 1
-
-                            except Exception as e:
-                                stats["errors"].append(f"CVE {cve_id} processing failed: {e}")
+                        # CVE IDs are stored as cve_ids property on the Vulnerability node
+                        # No separate CVE nodes created — avoids bare CVE node clutter
 
                     except Exception as e:
                         stats["errors"].append(f"Vulnerability processing failed: {e}")
+
+                # Process Traceroute from log-level findings
+                for vuln in vulnerabilities:
+                    try:
+                        nvt = vuln.get("nvt", {})
+                        if nvt.get("@oid") != "1.3.6.1.4.1.25623.1.0.51662":
+                            continue
+
+                        tr_data = self._parse_traceroute(vuln.get("description", ""))
+                        if not tr_data["hops"]:
+                            continue
+
+                        target_ip = tr_data["target_ip"]
+
+                        # MERGE Traceroute node
+                        session.run(
+                            """
+                            MERGE (tr:Traceroute {target_ip: $target_ip, user_id: $user_id, project_id: $project_id})
+                            SET tr.scanner_ip = $scanner_ip,
+                                tr.hops = $hops,
+                                tr.distance = $distance,
+                                tr.source = 'gvm',
+                                tr.scan_timestamp = $scan_timestamp,
+                                tr.updated_at = datetime()
+                            """,
+                            target_ip=target_ip, user_id=user_id, project_id=project_id,
+                            scanner_ip=tr_data["scanner_ip"],
+                            hops=tr_data["hops"],
+                            distance=tr_data["distance"],
+                            scan_timestamp=scan_timestamp,
+                        )
+                        stats["traceroutes_created"] += 1
+
+                        # Link Traceroute to IP node
+                        result = session.run(
+                            """
+                            MATCH (i:IP {address: $target_ip, user_id: $user_id, project_id: $project_id})
+                            MATCH (tr:Traceroute {target_ip: $target_ip, user_id: $user_id, project_id: $project_id})
+                            MERGE (i)-[:HAS_TRACEROUTE]->(tr)
+                            RETURN i
+                            """,
+                            target_ip=target_ip, user_id=user_id, project_id=project_id,
+                        )
+                        if result.single():
+                            stats["relationships_created"] += 1
+
+                    except Exception as e:
+                        stats["errors"].append(f"Traceroute processing failed: {e}")
+
+                # Process Closed CVEs from raw report data
+                try:
+                    raw_data = scan.get("raw_data", {})
+                    report = raw_data.get("report", raw_data)
+
+                    closed_cves_data = report.get("closed_cves", {})
+                    closed_count = int(closed_cves_data.get("count", "0")) if closed_cves_data else 0
+
+                    if closed_count > 0:
+                        closed_list = closed_cves_data.get("closed_cve", [])
+                        if isinstance(closed_list, dict):
+                            closed_list = [closed_list]
+
+                        for closed in closed_list:
+                            cve_id = closed.get("cve", {}).get("@id", "")
+                            if not cve_id:
+                                continue
+
+                            # Mark existing Vulnerability node as remediated
+                            session.run(
+                                """
+                                MATCH (v:Vulnerability {user_id: $uid, project_id: $pid, source: 'gvm'})
+                                WHERE $cve_id IN v.cve_ids
+                                SET v.remediated = true, v.updated_at = datetime()
+                                """,
+                                uid=user_id, pid=project_id, cve_id=cve_id
+                            )
+                            stats["closed_cves_processed"] += 1
+
+                except Exception as e:
+                    stats["errors"].append(f"Closed CVEs processing failed: {e}")
+
+                # Process TLS Certificates from raw report data
+                try:
+                    if not raw_data:
+                        raw_data = scan.get("raw_data", {})
+                        report = raw_data.get("report", raw_data)
+
+                    tls_certs = report.get("tls_certificates")
+                    if tls_certs and tls_certs.get("count", "0") != "0":
+                        cert_list = tls_certs.get("tls_certificate", [])
+                        if isinstance(cert_list, dict):
+                            cert_list = [cert_list]
+
+                        for cert_data in cert_list:
+                            cert_name = cert_data.get("name", "")
+                            if not cert_name:
+                                continue
+
+                            subject_cn = cert_name
+                            issuer_dn = cert_data.get("issuer_dn", "")
+                            serial = cert_data.get("serial", "")
+                            sha256 = cert_data.get("sha256_fingerprint", "")
+                            activation = cert_data.get("activation_time", "")
+                            expiration = cert_data.get("expiration_time", "")
+
+                            # Extract host:port binding
+                            host_info = cert_data.get("host", {})
+                            cert_ip = host_info.get("ip", "") if isinstance(host_info, dict) else str(host_info)
+
+                            cert_props = {
+                                "subject_cn": subject_cn,
+                                "user_id": user_id,
+                                "project_id": project_id,
+                                "issuer": issuer_dn,
+                                "serial": serial,
+                                "sha256_fingerprint": sha256,
+                                "not_before": activation,
+                                "not_after": expiration,
+                                "source": "gvm",
+                                "scan_timestamp": scan_timestamp,
+                            }
+                            cert_props = {k: v for k, v in cert_props.items() if v}
+
+                            session.run(
+                                """
+                                MERGE (c:Certificate {subject_cn: $subject_cn, project_id: $project_id})
+                                SET c += $props, c.updated_at = datetime()
+                                """,
+                                subject_cn=subject_cn, project_id=project_id, props=cert_props
+                            )
+
+                            # Link to IP node if available
+                            if cert_ip:
+                                session.run(
+                                    """
+                                    MATCH (i:IP {address: $ip, user_id: $uid, project_id: $pid})
+                                    MATCH (c:Certificate {subject_cn: $cn, project_id: $pid})
+                                    MERGE (i)-[:HAS_CERTIFICATE]->(c)
+                                    """,
+                                    ip=cert_ip, uid=user_id, pid=project_id, cn=subject_cn
+                                )
+
+                            stats["certificates_created"] += 1
+
+                except Exception as e:
+                    stats["errors"].append(f"TLS Certificates processing failed: {e}")
 
             # Update Domain node with GVM scan metadata
             if target_domain:
@@ -3360,11 +3654,414 @@ class Neo4jClient:
             print(f"[+] Created/enriched {stats['technologies_created']} Technology nodes from GVM")
             print(f"[+] Created {stats['ports_created']} Port nodes from GVM")
             print(f"[+] Created {stats['vulnerabilities_created']} GVM Vulnerability nodes")
+            print(f"[+] Created {stats['exploits_gvm_created']} ExploitGvm nodes (confirmed active exploits)")
+            print(f"[+] Created {stats['traceroutes_created']} Traceroute nodes")
+            print(f"[+] CISA KEV flagged: {stats['cisa_kev_count']} vulnerabilities")
+            print(f"[+] Closed CVEs processed: {stats['closed_cves_processed']}")
+            print(f"[+] TLS Certificates created: {stats['certificates_created']}")
             print(f"[+] Linked {stats['technologies_linked']} vulnerabilities to technologies")
             print(f"[+] Linked {stats['cves_linked']} CVEs")
             print(f"[+] Linked {stats['ips_linked']} IPs (fallback)")
             print(f"[+] Linked {stats['subdomains_linked']} Subdomains")
             print(f"[+] Created {stats['relationships_created']} relationships")
+
+            if stats["errors"]:
+                print(f"[!] {len(stats['errors'])} errors occurred")
+
+        return stats
+
+    def clear_github_hunt_data(self, user_id: str, project_id: str) -> dict:
+        """
+        Delete only GitHub Secret Hunt nodes and relationships for a project.
+
+        Preserves all recon and GVM data. Only removes:
+        - GithubSecret / GithubSensitiveFile nodes (leaf findings)
+        - GithubPath nodes
+        - GithubRepository nodes
+        - GithubHunt nodes
+        - All relationships between them and to Domain
+
+        Args:
+            user_id: User identifier
+            project_id: Project identifier
+
+        Returns:
+            dict with counts of deleted items
+        """
+        stats = {
+            "secrets_deleted": 0,
+            "sensitive_files_deleted": 0,
+            "paths_deleted": 0,
+            "repositories_deleted": 0,
+            "hunts_deleted": 0,
+        }
+
+        with self.driver.session() as session:
+            # 1. Delete leaf nodes first (GithubSecret)
+            result = session.run(
+                """
+                MATCH (gs:GithubSecret {user_id: $uid, project_id: $pid})
+                DETACH DELETE gs
+                RETURN count(gs) as deleted
+                """,
+                uid=user_id, pid=project_id
+            )
+            record = result.single()
+            if record:
+                stats["secrets_deleted"] = record["deleted"]
+
+            # 2. Delete leaf nodes (GithubSensitiveFile)
+            result = session.run(
+                """
+                MATCH (gsf:GithubSensitiveFile {user_id: $uid, project_id: $pid})
+                DETACH DELETE gsf
+                RETURN count(gsf) as deleted
+                """,
+                uid=user_id, pid=project_id
+            )
+            record = result.single()
+            if record:
+                stats["sensitive_files_deleted"] = record["deleted"]
+
+            # 3. Delete old GithubFinding nodes (from previous schema version)
+            session.run(
+                "MATCH (gf:GithubFinding {user_id: $uid, project_id: $pid}) DETACH DELETE gf",
+                uid=user_id, pid=project_id
+            )
+
+            # 4. Delete GithubPath nodes
+            result = session.run(
+                """
+                MATCH (gp:GithubPath {user_id: $uid, project_id: $pid})
+                DETACH DELETE gp
+                RETURN count(gp) as deleted
+                """,
+                uid=user_id, pid=project_id
+            )
+            record = result.single()
+            if record:
+                stats["paths_deleted"] = record["deleted"]
+
+            # 5. Delete GithubRepository nodes
+            result = session.run(
+                """
+                MATCH (gr:GithubRepository {user_id: $uid, project_id: $pid})
+                DETACH DELETE gr
+                RETURN count(gr) as deleted
+                """,
+                uid=user_id, pid=project_id
+            )
+            record = result.single()
+            if record:
+                stats["repositories_deleted"] = record["deleted"]
+
+            # 6. Delete GithubHunt nodes
+            result = session.run(
+                """
+                MATCH (gh:GithubHunt {user_id: $uid, project_id: $pid})
+                DETACH DELETE gh
+                RETURN count(gh) as deleted
+                """,
+                uid=user_id, pid=project_id
+            )
+            record = result.single()
+            if record:
+                stats["hunts_deleted"] = record["deleted"]
+
+            total = sum(stats.values())
+            print(f"[*] Cleared GitHub Hunt data: {total} items removed")
+
+        return stats
+
+    def update_graph_from_github_hunt(self, github_hunt_data: dict, user_id: str, project_id: str) -> dict:
+        """
+        Update the Neo4j graph database with GitHub Secret Hunt scan results.
+
+        Node hierarchy (5 levels):
+        - GithubHunt node (scan metadata: target, timestamps, statistics)
+        - GithubRepository nodes (each scanned repository)
+        - GithubPath nodes (each unique file path within a repository)
+        - GithubSecret nodes (SECRET findings — leaked credentials, API keys, etc.)
+        - GithubSensitiveFile nodes (SENSITIVE_FILE findings — .env, config files, etc.)
+
+        Relationships:
+        - Domain -[:HAS_GITHUB_HUNT]-> GithubHunt
+        - GithubHunt -[:HAS_REPOSITORY]-> GithubRepository
+        - GithubRepository -[:HAS_PATH]-> GithubPath
+        - GithubPath -[:CONTAINS_SECRET]-> GithubSecret
+        - GithubPath -[:CONTAINS_SENSITIVE_FILE]-> GithubSensitiveFile
+
+        Filtering: HIGH_ENTROPY findings are excluded (too noisy).
+        Deduplication: Findings across commits are deduplicated by repository+path+secret_type.
+
+        Args:
+            github_hunt_data: The GitHub hunt JSON data (top-level with target, findings, statistics)
+            user_id: User identifier for multi-tenant isolation
+            project_id: Project identifier for multi-tenant isolation
+
+        Returns:
+            Dictionary with statistics about created nodes/relationships
+        """
+        stats = {
+            "hunt_created": 0,
+            "repositories_created": 0,
+            "paths_created": 0,
+            "secrets_created": 0,
+            "sensitive_files_created": 0,
+            "relationships_created": 0,
+            "findings_skipped_high_entropy": 0,
+            "findings_deduplicated": 0,
+            "errors": []
+        }
+
+        # Validate input
+        target = github_hunt_data.get("target")
+        findings = github_hunt_data.get("findings", [])
+        if not target:
+            stats["errors"].append("No target found in github_hunt_data")
+            return stats
+
+        scan_statistics = github_hunt_data.get("statistics", {})
+
+        with self.driver.session() as session:
+            self._init_schema(session)
+
+            # Clear previous GitHub hunt data for this project
+            clear_stats = self.clear_github_hunt_data(user_id, project_id)
+            print(f"[*] Pre-cleared: {clear_stats}")
+
+            # 1. Create GithubHunt node (scan metadata)
+            hunt_id = f"github-hunt-{user_id}-{project_id}"
+            hunt_props = {
+                "id": hunt_id,
+                "user_id": user_id,
+                "project_id": project_id,
+                "target": target,
+                "scan_start_time": github_hunt_data.get("scan_start_time", ""),
+                "scan_end_time": github_hunt_data.get("scan_end_time", ""),
+                "duration_seconds": github_hunt_data.get("duration_seconds", 0),
+                "status": github_hunt_data.get("status", "unknown"),
+                "repos_scanned": scan_statistics.get("repos_scanned", 0),
+                "files_scanned": scan_statistics.get("files_scanned", 0),
+                "commits_scanned": scan_statistics.get("commits_scanned", 0),
+                "secrets_found": scan_statistics.get("secrets_found", 0),
+                "sensitive_files": scan_statistics.get("sensitive_files", 0),
+            }
+
+            try:
+                session.run(
+                    """
+                    MERGE (gh:GithubHunt {id: $id})
+                    SET gh += $props, gh.updated_at = datetime()
+                    """,
+                    id=hunt_id, props=hunt_props
+                )
+                stats["hunt_created"] += 1
+            except Exception as e:
+                stats["errors"].append(f"Failed to create GithubHunt node: {e}")
+                print(f"[!] GithubHunt creation failed: {e}")
+                return stats
+
+            # 2. Link GithubHunt to Domain node
+            try:
+                result = session.run(
+                    """
+                    MATCH (d:Domain {user_id: $uid, project_id: $pid})
+                    MATCH (gh:GithubHunt {id: $hunt_id})
+                    MERGE (d)-[:HAS_GITHUB_HUNT]->(gh)
+                    RETURN count(*) as linked
+                    """,
+                    uid=user_id, pid=project_id, hunt_id=hunt_id
+                )
+                record = result.single()
+                if record and record["linked"] > 0:
+                    stats["relationships_created"] += 1
+                else:
+                    print(f"[!] Warning: No Domain node found for user_id={user_id}, project_id={project_id}")
+            except Exception as e:
+                stats["errors"].append(f"Failed to link GithubHunt to Domain: {e}")
+
+            # 3. Process findings (skip HIGH_ENTROPY, deduplicate across commits)
+            seen_findings = set()  # dedup key: repo:path:secret_type
+            created_repos = set()
+            created_paths = set()  # dedup key: repo:path
+
+            for finding in findings:
+                finding_type = finding.get("type", "")
+
+                # Skip HIGH_ENTROPY findings
+                if finding_type == "HIGH_ENTROPY":
+                    stats["findings_skipped_high_entropy"] += 1
+                    continue
+
+                # Only process SECRET and SENSITIVE_FILE
+                if finding_type not in ("SECRET", "SENSITIVE_FILE"):
+                    continue
+
+                repository = finding.get("repository", "")
+                path = finding.get("path", "")
+                secret_type = finding.get("secret_type", "")
+
+                if not repository or not secret_type:
+                    continue
+
+                # Strip commit hash from path: "file.py (commit: abc123)" → "file.py"
+                clean_path = path.split(" (commit:")[0].strip()
+
+                # Deduplicate: same repo + path + secret_type across commits
+                dedup_key = f"{repository}:{clean_path}:{secret_type}"
+                if dedup_key in seen_findings:
+                    stats["findings_deduplicated"] += 1
+                    continue
+                seen_findings.add(dedup_key)
+
+                repo_id = f"github-repo-{user_id}-{project_id}-{repository}"
+                path_id = f"github-path-{user_id}-{project_id}-{hash(f'{repository}:{clean_path}') & 0xFFFFFFFF:08x}"
+
+                # 3a. Create/merge GithubRepository node
+                if repository not in created_repos:
+                    repo_props = {
+                        "id": repo_id,
+                        "name": repository,
+                        "user_id": user_id,
+                        "project_id": project_id,
+                    }
+                    try:
+                        session.run(
+                            "MERGE (gr:GithubRepository {id: $id}) SET gr += $props, gr.updated_at = datetime()",
+                            id=repo_id, props=repo_props
+                        )
+                        stats["repositories_created"] += 1
+                        created_repos.add(repository)
+
+                        # Link GithubHunt → GithubRepository
+                        session.run(
+                            """
+                            MATCH (gh:GithubHunt {id: $hunt_id})
+                            MATCH (gr:GithubRepository {id: $repo_id})
+                            MERGE (gh)-[:HAS_REPOSITORY]->(gr)
+                            """,
+                            hunt_id=hunt_id, repo_id=repo_id
+                        )
+                        stats["relationships_created"] += 1
+                    except Exception as e:
+                        stats["errors"].append(f"Failed to create repo {repository}: {e}")
+                        continue
+
+                # 3b. Create/merge GithubPath node
+                path_key = f"{repository}:{clean_path}"
+                if path_key not in created_paths:
+                    path_props = {
+                        "id": path_id,
+                        "path": clean_path,
+                        "repository": repository,
+                        "user_id": user_id,
+                        "project_id": project_id,
+                    }
+                    try:
+                        session.run(
+                            "MERGE (gp:GithubPath {id: $id}) SET gp += $props, gp.updated_at = datetime()",
+                            id=path_id, props=path_props
+                        )
+                        stats["paths_created"] += 1
+                        created_paths.add(path_key)
+
+                        # Link GithubRepository → GithubPath
+                        session.run(
+                            """
+                            MATCH (gr:GithubRepository {id: $repo_id})
+                            MATCH (gp:GithubPath {id: $path_id})
+                            MERGE (gr)-[:HAS_PATH]->(gp)
+                            """,
+                            repo_id=repo_id, path_id=path_id
+                        )
+                        stats["relationships_created"] += 1
+                    except Exception as e:
+                        stats["errors"].append(f"Failed to create path {path_key}: {e}")
+                        continue
+
+                # 3c. Create leaf finding node (GithubSecret or GithubSensitiveFile)
+                finding_hash = f"{hash(dedup_key) & 0xFFFFFFFF:08x}"
+                details = finding.get("details", {})
+
+                if finding_type == "SECRET":
+                    node_id = f"github-secret-{user_id}-{project_id}-{finding_hash}"
+                    node_props = {
+                        "id": node_id,
+                        "user_id": user_id,
+                        "project_id": project_id,
+                        "secret_type": secret_type,
+                        "repository": repository,
+                        "path": clean_path,
+                        "timestamp": finding.get("timestamp", ""),
+                    }
+                    if details.get("matches"):
+                        node_props["matches"] = details["matches"]
+                    if details.get("sample"):
+                        node_props["sample"] = details["sample"]
+
+                    try:
+                        session.run(
+                            "MERGE (gs:GithubSecret {id: $id}) SET gs += $props, gs.updated_at = datetime()",
+                            id=node_id, props=node_props
+                        )
+                        stats["secrets_created"] += 1
+
+                        # Link GithubPath → GithubSecret
+                        session.run(
+                            """
+                            MATCH (gp:GithubPath {id: $path_id})
+                            MATCH (gs:GithubSecret {id: $node_id})
+                            MERGE (gp)-[:CONTAINS_SECRET]->(gs)
+                            """,
+                            path_id=path_id, node_id=node_id
+                        )
+                        stats["relationships_created"] += 1
+                    except Exception as e:
+                        stats["errors"].append(f"Failed to create secret {dedup_key}: {e}")
+
+                elif finding_type == "SENSITIVE_FILE":
+                    node_id = f"github-sensitivefi-{user_id}-{project_id}-{finding_hash}"
+                    node_props = {
+                        "id": node_id,
+                        "user_id": user_id,
+                        "project_id": project_id,
+                        "secret_type": secret_type,
+                        "repository": repository,
+                        "path": clean_path,
+                        "timestamp": finding.get("timestamp", ""),
+                    }
+
+                    try:
+                        session.run(
+                            "MERGE (gsf:GithubSensitiveFile {id: $id}) SET gsf += $props, gsf.updated_at = datetime()",
+                            id=node_id, props=node_props
+                        )
+                        stats["sensitive_files_created"] += 1
+
+                        # Link GithubPath → GithubSensitiveFile
+                        session.run(
+                            """
+                            MATCH (gp:GithubPath {id: $path_id})
+                            MATCH (gsf:GithubSensitiveFile {id: $node_id})
+                            MERGE (gp)-[:CONTAINS_SENSITIVE_FILE]->(gsf)
+                            """,
+                            path_id=path_id, node_id=node_id
+                        )
+                        stats["relationships_created"] += 1
+                    except Exception as e:
+                        stats["errors"].append(f"Failed to create sensitive file {dedup_key}: {e}")
+
+            # Print summary
+            print(f"\n[+] GitHub Hunt Graph Update Summary:")
+            print(f"[+] Created {stats['hunt_created']} GithubHunt node")
+            print(f"[+] Created {stats['repositories_created']} GithubRepository nodes")
+            print(f"[+] Created {stats['paths_created']} GithubPath nodes")
+            print(f"[+] Created {stats['secrets_created']} GithubSecret nodes")
+            print(f"[+] Created {stats['sensitive_files_created']} GithubSensitiveFile nodes")
+            print(f"[+] Created {stats['relationships_created']} relationships")
+            print(f"[+] Skipped {stats['findings_skipped_high_entropy']} HIGH_ENTROPY findings")
+            print(f"[+] Deduplicated {stats['findings_deduplicated']} cross-commit findings")
 
             if stats["errors"]:
                 print(f"[!] {len(stats['errors'])} errors occurred")

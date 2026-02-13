@@ -58,7 +58,7 @@ export function NodeDrawer({ node, isOpen, onClose, onDeleteNode }: NodeDrawerPr
           <div className={styles.section}>
             <div className={styles.sectionHeader}>
               <h3 className={styles.sectionTitleBasicInfo}>Basic Info</h3>
-              {node.type === 'Exploit' && onDeleteNode && (
+              {(node.type === 'Exploit' || node.type === 'ExploitGvm') && onDeleteNode && (
                 <button
                   className={styles.deleteButton}
                   onClick={handleDelete}

@@ -1351,7 +1351,7 @@ flowchart LR
 | `OPENAI_MODEL` | `"gpt-5.2"` | LLM model for reasoning |
 | `MAX_ITERATIONS` | `100` | Maximum ReAct loop iterations |
 | `EXECUTION_TRACE_MEMORY_STEPS` | `100` | How many steps to include in LLM context |
-| `TOOL_OUTPUT_MAX_CHARS` | `8000` | Truncate tool output for LLM analysis |
+| `TOOL_OUTPUT_MAX_CHARS` | `20000` | Truncate tool output for LLM analysis |
 | `REQUIRE_APPROVAL_FOR_EXPLOITATION` | `true` | Require user approval for exploitation phase |
 | `REQUIRE_APPROVAL_FOR_POST_EXPLOITATION` | `true` | Require user approval for post-exploitation |
 | `ACTIVATE_POST_EXPL_PHASE` | `true` | Enable post-exploitation phase |

@@ -17,6 +17,7 @@ Usage:
 
 import os
 import sys
+import json
 from pathlib import Path
 from datetime import datetime
 
@@ -57,11 +58,13 @@ def run_github_secret_hunt(project_id: str) -> dict:
     scan_commits = get_setting('GITHUB_SCAN_COMMITS', True)
     max_commits = get_setting('GITHUB_MAX_COMMITS', 100)
     output_json = get_setting('GITHUB_OUTPUT_JSON', True)
+    target_repos = get_setting('GITHUB_TARGET_REPOS', '')
 
     print("\n" + "=" * 70)
     print("           RedAmon - GitHub Secret Hunter")
     print("=" * 70)
     print(f"  Target Org/User: {target}")
+    print(f"  Target Repos:    {target_repos or '(all)'}")
     print(f"  Scan Members:    {scan_members}")
     print(f"  Scan Gists:      {scan_gists}")
     print(f"  Scan Commits:    {scan_commits}")
@@ -89,6 +92,7 @@ def run_github_secret_hunt(project_id: str) -> dict:
         'GITHUB_SCAN_COMMITS': scan_commits,
         'GITHUB_MAX_COMMITS': max_commits,
         'GITHUB_OUTPUT_JSON': output_json,
+        'GITHUB_TARGET_REPOS': target_repos,
     }
 
     # Run the scanner
@@ -101,6 +105,32 @@ def run_github_secret_hunt(project_id: str) -> dict:
     )
 
     findings = hunter.run()
+
+    # Update Neo4j graph database with findings
+    user_id = os.environ.get("USER_ID", "")
+    if hunter.output_file and Path(hunter.output_file).exists():
+        try:
+            from graph_db import Neo4jClient
+
+            with open(hunter.output_file, 'r') as f:
+                github_hunt_data = json.load(f)
+
+            print("\n" + "=" * 50)
+            print("[*] Updating Neo4j graph with GitHub Hunt results...")
+            print("=" * 50)
+
+            with Neo4jClient() as graph_client:
+                if graph_client.verify_connection():
+                    graph_stats = graph_client.update_graph_from_github_hunt(
+                        github_hunt_data, user_id, project_id
+                    )
+                    print(f"[+] Graph database updated successfully")
+                else:
+                    print("[!] Could not connect to Neo4j - skipping graph update")
+        except ImportError:
+            print("[!] Neo4j client not available - skipping graph update")
+        except Exception as e:
+            print(f"[!] Graph DB update failed (non-fatal): {e}")
 
     return {
         "target": target,

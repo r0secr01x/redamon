@@ -117,7 +117,7 @@ export function GraphCanvas2D({
 
         // Draw selection marker (outer ring) for selected node
         if (isSelected) {
-          if (graphNode.type === 'Exploit') {
+          if (graphNode.type === 'Exploit' || graphNode.type === 'ExploitGvm') {
             // Diamond selection ring
             const sd = nodeSize * 1.2 + 6
             ctx.beginPath()
@@ -167,7 +167,7 @@ export function GraphCanvas2D({
         }
 
         // Draw main shape
-        const isExploit = graphNode.type === 'Exploit'
+        const isExploit = graphNode.type === 'Exploit' || graphNode.type === 'ExploitGvm'
         if (isExploit) {
           // Diamond shape for Exploit nodes (rotated square)
           const d = nodeSize * 1.2 // diamond half-diagonal

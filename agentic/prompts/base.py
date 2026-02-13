@@ -56,11 +56,13 @@ INFORMATIONAL_TOOLS = """
 
 1. **query_graph** (PRIMARY - Always use first!)
    - Query Neo4j graph database using natural language
-   - Contains: Domains, Subdomains, IPs, Ports, Services, Technologies, Vulnerabilities, CVEs
+   - Contains: Domains, Subdomains, IPs, Ports, Services, Technologies, Vulnerabilities, CVEs, GitHub Secrets (leaked credentials, sensitive files from repositories)
    - This is your PRIMARY source of truth for reconnaissance data
    - Example: "Show all critical vulnerabilities for this project"
    - Example: "What ports are open on 10.0.0.5?"
    - Example: "What technologies are running on the target?"
+   - Example: "What GitHub secrets were found for this project?"
+   - Example: "Show leaked credentials from GitHub repositories"
 
 2. **web_search** (SECONDARY - Research from the web)
    - Search the internet for security research information via Tavily
@@ -165,7 +167,7 @@ The orchestrator automatically detects when Metasploit sessions are established:
 
 ### Tool Execution
 - **Metasploit auto-reset:** First `metasploit_console` call in session resets msfconsole state (clears previous modules/sessions)
-- **Tool output truncation:** Output limited to 8000 chars to prevent context overflow
+- **Tool output truncation:** Output limited to 20000 chars to prevent context overflow
 - **Phase restrictions:** Orchestrator enforces which tools work in which phases, but always check before using
 
 ## Intent Detection (CRITICAL)
@@ -763,6 +765,13 @@ Each node has `user_id` and `project_id` properties for tenant isolation (handle
 - record_type (string): "A", "AAAA", "CNAME", "MX", "TXT", "NS"
 - value (string): record value
 
+**Traceroute** - Network route from scanner to target (from GVM)
+- target_ip (string): target IP address
+- scanner_ip (string): scanner IP address
+- hops (string[]): ordered list of hop IPs (scanner first, target last)
+- distance (integer): number of network hops
+- source (string): always "gvm"
+
 ### Vulnerability & CVE Nodes (CRITICAL: Two Different Node Types!)
 
 **IMPORTANT: "Vulnerabilities" can mean BOTH Vulnerability nodes AND CVE nodes!**
@@ -771,16 +780,41 @@ Each node has `user_id` and `project_id` properties for tenant isolation (handle
 - CVE nodes = known CVEs linked to technologies detected on the target
 
 **Vulnerability** - Scanner findings (from nuclei, gvm, security checks)
+
+Common properties (all sources):
 - id (string): unique identifier
-- name (string): vulnerability name (e.g., "SPF Record Missing", "Apache Path Traversal")
+- name (string): vulnerability name
 - severity (string): "critical", "high", "medium", "low", "info" (lowercase!)
 - source (string): **"nuclei"** (DAST/web), **"gvm"** (network/OpenVAS), or **"security_check"**
-- category (string): for nuclei - "xss", "sqli", "rce", "lfi", "ssrf", "exposure", etc.
+- description (string): vulnerability description
 - cvss_score (float): 0.0 to 10.0
-- description, solution (string)
-- template_id (string): nuclei template ID (for nuclei source)
-- oid (string): OpenVAS OID (for gvm source)
-- cve_ids (list): associated CVE IDs
+
+Nuclei-specific properties (source="nuclei"):
+- template_id (string): nuclei template ID
+- template_path, template_url (string): template location
+- category (string): "xss", "sqli", "rce", "lfi", "ssrf", "exposure", etc.
+- tags (list), authors (list), references (list)
+- cwe_ids (list), cves (list), cvss_metrics (string)
+- matched_at (string): URL where vuln was found
+- matcher_name, matcher_status, extractor_name, extracted_results
+- request_type, scheme, host, port, path, matched_ip
+- is_dast_finding (boolean), fuzzing_method, fuzzing_parameter, fuzzing_position
+- curl_command (string): reproduction command
+- raw_request, raw_response (string): evidence
+
+GVM-specific properties (source="gvm"):
+- oid (string): OpenVAS NVT OID
+- family (string): NVT family (e.g., "Web Servers")
+- target_ip (string), target_port (integer), target_hostname (string), port_protocol (string)
+- threat (string): "High", "Medium", "Low", "Log"
+- solution (string), solution_type (string)
+- qod (integer): Quality of Detection (0-100)
+- qod_type (string): detection method type
+- cve_ids (list): associated CVE IDs (stored as property, no CVE node relationships)
+- cisa_kev (boolean): true if in CISA Known Exploited Vulnerabilities catalog
+- remediated (boolean): true if marked as closed/patched by GVM re-scan
+- scanner (string): always "OpenVAS"
+- scan_timestamp (string): GVM scan timestamp
 
 **CVE** - Known CVE entries (linked to Technologies)
 - id (string): "CVE-2021-41773", "CVE-2021-44228"
@@ -821,6 +855,18 @@ Each node has `user_id` and `project_id` properties for tenant isolation (handle
 - commands_used (string[]): Metasploit commands used
 - created_at (datetime)
 
+**ExploitGvm** - GVM confirmed active exploitation (QoD=100, "Active Check")
+- id (string): deterministic ID (gvm-exploit-{oid}-{ip}-{port})
+- attack_type (string): always "cve_exploit"
+- severity (string): always "critical" (confirmed compromise)
+- target_ip (string), target_port (integer)
+- cve_ids (string[]): CVE IDs exploited
+- cisa_kev (boolean): CISA KEV flag
+- evidence (string): full description with execution proof (e.g., uid=0(root))
+- qod (integer): always 100
+- source (string): always "gvm"
+- oid (string): OpenVAS NVT OID
+
 ## Relationships (CRITICAL: Direction Matters!)
 
 ### Infrastructure Relationships
@@ -828,6 +874,8 @@ Each node has `user_id` and `project_id` properties for tenant isolation (handle
 - `(i:IP)-[:RESOLVES_TO]->(s:Subdomain)` - IP resolves to Subdomain (DNS)
 - `(i:IP)-[:HAS_PORT]->(p:Port)` - IP has open Port
 - `(p:Port)-[:RUNS_SERVICE]->(svc:Service)` - Port runs Service
+- `(i:IP)-[:HAS_TRACEROUTE]->(tr:Traceroute)` - IP has network route data
+- `(i:IP)-[:HAS_CERTIFICATE]->(c:Certificate)` - IP has TLS certificate (GVM-discovered)
 
 ### Web Application Relationships
 - `(b:BaseURL)-[:BELONGS_TO]->(s:Subdomain)` - BaseURL belongs to Subdomain
@@ -864,6 +912,7 @@ Each node has `user_id` and `project_id` properties for tenant isolation (handle
 - `(ex:Exploit)-[:EXPLOITED_CVE]->(c:CVE)` - Exploit targeted a CVE (for cve_exploit)
 - `(ex:Exploit)-[:TARGETED_IP]->(i:IP)` - Exploit targeted an IP
 - `(ex:Exploit)-[:VIA_PORT]->(p:Port)` - Exploit went through a port (for brute_force)
+- `(e:ExploitGvm)-[:EXPLOITED_CVE]->(c:CVE)` - GVM confirmed exploitation of CVE (only connection)
 
 ## Common Query Patterns
 
@@ -930,6 +979,35 @@ MATCH (i:IP)-[:RESOLVES_TO]->(s)
 MATCH (i)-[:HAS_PORT]->(p:Port)
 WHERE p.state = "open"
 RETURN s.name, i.address, p.number, p.protocol
+```
+
+### Network Topology
+```cypher
+// Traceroute to target IP
+MATCH (i:IP)-[:HAS_TRACEROUTE]->(tr:Traceroute)
+RETURN i.address, tr.scanner_ip, tr.distance, tr.hops
+```
+
+### CISA KEV (Known Weaponized Vulnerabilities)
+```cypher
+// Find vulnerabilities in the CISA Known Exploited Vulnerabilities catalog
+MATCH (v:Vulnerability {cisa_kev: true})
+RETURN v.name, v.severity, v.cve_ids, v.target_ip
+
+// Find remediated vulnerabilities
+MATCH (v:Vulnerability {remediated: true})
+RETURN v.name, v.cve_ids
+```
+
+### GVM Confirmed Exploits
+```cypher
+// GVM active checks that confirmed exploitation (QoD=100)
+MATCH (e:ExploitGvm)-[:EXPLOITED_CVE]->(c:CVE)
+RETURN e.name, e.target_ip, c.id, e.evidence
+
+// All confirmed compromises (both AI agent and GVM)
+MATCH (e) WHERE e:Exploit OR e:ExploitGvm
+RETURN labels(e)[0] as source, e.name, e.target_ip, e.cve_ids
 ```
 
 ### Exploitation Results

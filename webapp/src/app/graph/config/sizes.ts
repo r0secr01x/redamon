@@ -5,9 +5,16 @@ export const NODE_SIZES: Record<string, number> = {
   IP: 2,
   Port: 2,
   Service: 2,
+  Traceroute: 1.5,
   BaseURL: 3,
   Technology: 2,
   Exploit: 2.5, // Largest node - confirmed compromise (diamond shape)
+  ExploitGvm: 2.5, // GVM confirmed exploit - same diamond shape
+  GithubHunt: 2.5,          // Prominent scan node
+  GithubRepository: 1.5,    // Medium repo nodes
+  GithubPath: 1.2,          // File path nodes
+  GithubSecret: 1,          // Leaf: leaked secret
+  GithubSensitiveFile: 1,   // Leaf: sensitive file
   Default: 1,
 }
 

@@ -917,12 +917,18 @@ class ContainerManager:
                     "USER_ID": user_id,
                     "WEBAPP_API_URL": webapp_api_url,
                     "PYTHONUNBUFFERED": "1",
+                    # Forward Neo4j credentials from orchestrator environment
+                    "NEO4J_URI": os.environ.get("NEO4J_URI", "bolt://localhost:7687"),
+                    "NEO4J_USER": os.environ.get("NEO4J_USER", "neo4j"),
+                    "NEO4J_PASSWORD": os.environ.get("NEO4J_PASSWORD", ""),
                 },
                 volumes={
                     # GitHub hunt output (read-write, for saving results)
                     f"{github_hunt_path}/output": {"bind": "/app/github_secret_hunt/output", "mode": "rw"},
                     # Mount github_secret_hunt source for development (no rebuild needed)
                     f"{github_hunt_path}": {"bind": "/app/github_secret_hunt", "mode": "rw"},
+                    # Mount graph_db module for Neo4j integration
+                    f"{Path(github_hunt_path).parent}/graph_db": {"bind": "/app/graph_db", "mode": "ro"},
                 },
                 command="python github_secret_hunt/main.py",
             )

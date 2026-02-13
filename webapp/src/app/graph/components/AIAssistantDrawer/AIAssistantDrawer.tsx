@@ -686,10 +686,10 @@ export function AIAssistantDrawer({
       <div className={styles.header}>
         <div className={styles.headerLeft}>
           <div className={styles.headerIcon}>
-            <Sparkles size={16} />
+            <Bot size={16} />
           </div>
           <div className={styles.headerText}>
-            <h2 className={styles.title}>AI Assistant</h2>
+            <h2 className={styles.title}>AI Agent</h2>
             <div className={styles.connectionStatus}>
               {getConnectionStatusIcon()}
               <span className={styles.subtitle} style={{ color: getConnectionStatusColor() }}>
@@ -768,33 +768,110 @@ export function AIAssistantDrawer({
         {chatItems.length === 0 && (
           <div className={styles.emptyState}>
             <div className={styles.emptyIcon}>
-              <Bot size={32} />
+              <img src="/logo.png" alt="RedAmon" width={72} height={72} style={{ objectFit: 'contain' }} />
             </div>
             <h3 className={styles.emptyTitle}>How can I help you?</h3>
             <p className={styles.emptyDescription}>
-              Ask me about vulnerabilities, scan results, or query the graph database.
+              Ask me about recon data, vulnerabilities, exploitation, or post-exploitation activities.
             </p>
             <div className={styles.suggestions}>
               <button
                 className={styles.suggestion}
-                onClick={() => setInputValue('What vulnerabilities were found?')}
+                onClick={() => setInputValue('Map the attack surface: list all domains, subdomains, IPs, open ports, and services discovered')}
                 disabled={!isConnected}
               >
-                What vulnerabilities were found?
+                Map the full attack surface
               </button>
               <button
                 className={styles.suggestion}
-                onClick={() => setInputValue('Show me all CVEs with critical severity')}
+                onClick={() => setInputValue('Which vulnerabilities have known Metasploit exploit modules available?')}
                 disabled={!isConnected}
               >
-                Show me critical CVEs
+                Find exploitable CVEs with Metasploit modules
               </button>
               <button
                 className={styles.suggestion}
-                onClick={() => setInputValue('What technologies are in use?')}
+                onClick={() => setInputValue('Were any credentials, API keys, or secrets leaked in GitHub repositories?')}
                 disabled={!isConnected}
               >
-                What technologies are in use?
+                Check for leaked secrets on GitHub
+              </button>
+              <button
+                className={styles.suggestion}
+                onClick={() => setInputValue('Are any CISA Known Exploited Vulnerabilities (KEV) present in the scan results?')}
+                disabled={!isConnected}
+              >
+                Find CISA Known Exploited Vulnerabilities
+              </button>
+              <button
+                className={styles.suggestion}
+                onClick={() => setInputValue('What web endpoints, parameters, and forms were discovered by the crawler?')}
+                disabled={!isConnected}
+              >
+                Show discovered web endpoints and parameters
+              </button>
+              <button
+                className={styles.suggestion}
+                onClick={() => setInputValue('Give me a prioritized risk summary of all findings ranked by severity and exploitability')}
+                disabled={!isConnected}
+              >
+                Prioritized risk summary
+              </button>
+              <button
+                className={styles.suggestion}
+                onClick={() => setInputValue('What technology versions were detected, and which ones have known CVEs?')}
+                disabled={!isConnected}
+              >
+                Detect outdated technologies with known CVEs
+              </button>
+              <button
+                className={styles.suggestion}
+                onClick={() => setInputValue('Which services expose authentication that could be tested with credential brute force?')}
+                disabled={!isConnected}
+              >
+                Find brute-forceable services
+              </button>
+              <button
+                className={styles.suggestion}
+                onClick={() => setInputValue('Analyze TLS certificates and HTTP security headers for misconfigurations')}
+                disabled={!isConnected}
+              >
+                Analyze TLS and security headers
+              </button>
+              <button
+                className={styles.suggestion}
+                onClick={() => setInputValue('Find and exploit the most critical CVE affecting the primary target')}
+                disabled={!isConnected}
+              >
+                Exploit the most critical vulnerability
+              </button>
+              <button
+                className={styles.suggestion}
+                onClick={() => setInputValue('Find the most critical CVE on the target, exploit it with Metasploit, and open a shell session')}
+                disabled={!isConnected}
+              >
+                Exploit a critical CVE and open a session
+              </button>
+              <button
+                className={styles.suggestion}
+                onClick={() => setInputValue('Brute force SSH credentials on the target, then list sensitive files and directories')}
+                disabled={!isConnected}
+              >
+                Brute force SSH and explore the server
+              </button>
+              <button
+                className={styles.suggestion}
+                onClick={() => setInputValue('After gaining access, search for passwords, API keys, config files, and database credentials on the server')}
+                disabled={!isConnected}
+              >
+                Hunt for secrets on a compromised server
+              </button>
+              <button
+                className={styles.suggestion}
+                onClick={() => setInputValue('Exploit the target web server and replace the homepage with a defacement page as proof of compromise')}
+                disabled={!isConnected}
+              >
+                Deface the target homepage
               </button>
             </div>
           </div>

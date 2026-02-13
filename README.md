@@ -115,37 +115,6 @@ docker compose --profile tools down --rmi local
 docker compose --profile tools down --rmi local --volumes --remove-orphans
 ```
 
-### Running Reconnaissance
-
-1. Create a project with target domain and settings
-2. Navigate to Graph page
-3. Click "Start Recon" button
-4. Watch real-time logs in the drawer
-
-### Running GVM Vulnerability Scan
-
-After reconnaissance completes, you can run a GVM network-level vulnerability scan:
-
-1. GVM starts automatically with `docker compose up -d` (first run takes ~30 min for feed sync)
-2. Navigate to Graph page
-3. Click the "GVM Scan" button (enabled only when recon data exists for the project)
-4. Watch real-time logs in the GVM logs drawer
-5. Download the GVM results JSON when complete
-
-> **Note:** Default GVM credentials are `admin` / `admin` (auto-created by gvmd on first start).
-
-### Running GitHub Secret Hunt
-
-After reconnaissance completes, you can run a GitHub Secret Hunt to search for exposed secrets, API keys, and credentials in GitHub repositories related to your target:
-
-1. Configure a **GitHub Personal Access Token** and **Target Organization** in the project settings (see [GitHub Secret Hunting parameters](#github-secret-hunting) for step-by-step token setup)
-2. Navigate to Graph page
-3. Click the **GitHub Hunt** button (enabled only when recon data exists for the project)
-4. Watch real-time logs in the GitHub Hunt logs drawer (3-phase progress: Loading Settings, Scanning Repositories, Complete)
-5. Download the results JSON when complete
-
-> **Note:** The GitHub token is used **exclusively for read-only scanning** — it searches repositories and gists for leaked secrets using pattern matching and entropy analysis. It does not modify, create, or delete any content on GitHub.
-
 ### Development Mode
 
 For active development with **Next.js fast refresh** (no rebuild on every change):
@@ -176,6 +145,8 @@ No rebuild needed — just restart.
 - [Overview](#overview)
   - [Reconnaissance Pipeline](#reconnaissance-pipeline)
   - [AI Agent Orchestrator](#ai-agent-orchestrator)
+  - [GitHub Secret Hunter](#github-secret-hunter)
+  - [GVM Vulnerability Scanner](#gvm-vulnerability-scanner-optional)
   - [Attack Surface Graph](#attack-surface-graph)
   - [Project Settings](#project-settings)
 - [System Architecture](#system-architecture)
@@ -281,6 +252,13 @@ The discovered endpoints — especially those with query parameters — are fed 
 
 All results are combined into a single JSON file (`recon/output/recon_{PROJECT_ID}.json`) and simultaneously imported into the Neo4j graph database, creating a fully connected knowledge graph of the target's attack surface.
 
+#### Running Reconnaissance
+
+1. Create a project with target domain and settings
+2. Navigate to Graph page
+3. Click "Start Recon" button
+4. Watch real-time logs in the drawer
+
 ---
 
 ### GVM Vulnerability Scanner (Optional)
@@ -321,6 +299,16 @@ The key difference between "fast" and "very deep" profiles is how they use prior
 #### Integration with RedAmon
 
 GVM findings are stored as Vulnerability nodes (`source="gvm"`) in Neo4j, linked to IP and Subdomain nodes via `HAS_VULNERABILITY` relationships, with associated CVE nodes. This means the AI agent can reason about both web-layer vulnerabilities (from Nuclei) and network-layer vulnerabilities (from GVM) in a single unified graph.
+
+#### Running a GVM Scan
+
+1. GVM starts automatically with `docker compose up -d` (first run takes ~30 min for feed sync)
+2. Navigate to Graph page
+3. Click the "GVM Scan" button (enabled only when recon data exists for the project)
+4. Watch real-time logs in the GVM logs drawer
+5. Download the GVM results JSON when complete
+
+> **Note:** Default GVM credentials are `admin` / `admin` (auto-created by gvmd on first start).
 
 ---
 
@@ -380,6 +368,21 @@ The agent executes security tools through the **Model Context Protocol**, with e
 | **metasploit_console** | Exploit execution, payload delivery, sessions | Exploitation & Post-exploitation |
 
 For long-running Metasploit operations (e.g., brute force with large wordlists), the agent streams progress updates every 5 seconds to the WebSocket, so you see output in real time.
+
+#### Attack Path Routing
+
+The agent uses an **LLM-powered Intent Router** to classify each user request into the appropriate attack path category. Rather than following a single, fixed exploitation workflow, the router analyzes the user's objective, the available target intelligence from the Neo4j graph, and the current operational phase to select the correct attack chain — each with its own Metasploit workflow, tool sequence, and post-exploitation behavior.
+
+The architecture supports **10 attack path categories** (CVE exploitation, brute force, social engineering, DoS, fuzzing, credential capture, wireless attacks, web application attacks, client-side exploitation, and local privilege escalation), with an implementation roadmap to progressively enable each one. Attack paths can also **chain into each other** — for example, a credential capture can feed captured usernames into a brute force attack, or a fuzzing discovery can chain into CVE research and exploitation.
+
+**Currently implemented attack paths:**
+
+| # | Attack Path | Description | Module Type | Post-Exploitation |
+|---|-------------|-------------|-------------|-------------------|
+| 1 | **CVE-Based Exploitation** | Exploits known vulnerabilities identified by CVE identifier. The agent searches for a matching Metasploit exploit module, configures target parameters and payload (reverse/bind shell), and fires the exploit. Supports both statefull (Meterpreter session) and stateless (one-shot command) post-exploitation. | `exploit/*` | Yes |
+| 2 | **Brute Force / Credential Guess** | Password guessing attacks against authentication services (SSH, FTP, MySQL, SMB, HTTP, and more). The agent selects the appropriate `auxiliary/scanner/*/login` module, configures wordlists from Metasploit's built-in collection, and runs the attack. When SSH brute force succeeds with `CreateSession: true`, the agent transitions to a shell-based post-exploitation phase. | `auxiliary/scanner/*` | Sometimes (SSH) |
+
+For full details on all 10 attack path categories, the intent router architecture, chain-specific workflows, and the implementation roadmap, see the **[Attack Paths Documentation](agentic/README.ATTACK_PATHS.md)**.
 
 ---
 
@@ -747,6 +750,7 @@ The scanner uses **40+ regex patterns** and **Shannon entropy analysis** to dete
 |-----------|---------|-------------|
 | GitHub Access Token | — | The Personal Access Token (PAT) that authenticates API requests to GitHub. Without this token, no scanning can occur — all other options remain disabled until a valid token is provided. The token format is `ghp_xxxxxxxxxxxx`. See the step-by-step guide above for creating one with the correct scopes |
 | Target Organization | — | The GitHub **organization name** or **username** to scan. This is the account whose repositories will be searched for leaked secrets. For example, if your target domain is `example.com` and their GitHub organization is `example-inc`, enter `example-inc` here. You can also enter a personal GitHub username to scan that user's public repositories. The scanner will enumerate all accessible repositories under this account and search their contents for secret patterns |
+| Target Repositories | — | Comma-separated list of **repository names** to scan (e.g., `repo1, repo2, repo3`). When specified, only the listed repositories are scanned instead of all repositories under the target organization/user. Matching is **case-insensitive** and uses the repository name only (not `owner/repo`). Leave empty to scan **all** accessible repositories — which is the default behavior |
 | Scan Member Repositories | false | When enabled, the scanner also discovers and scans repositories belonging to **individual members** of the target organization — not just the organization's own repos. This is useful because developers often store work-related code (including secrets) in their personal accounts. Requires the `read:org` scope on your token. Significantly increases scan scope and time |
 | Scan Gists | false | When enabled, the scanner searches **GitHub Gists** (code snippets) created by the organization and its members. Developers frequently paste configuration files, API keys, and connection strings into gists without realizing they're public. Requires the `gist` scope on your token |
 | Scan Commits | false | When enabled, the scanner examines **commit history** — not just the current state of files, but also previous versions. This catches secrets that were committed and later removed (but remain in git history). **This is the most expensive operation** — disabling it saves 50%+ of total scan time. Each commit requires a separate API call to retrieve and analyze the diff |
@@ -776,7 +780,7 @@ Controls how reverse/bind shell payloads connect. **Reverse**: target connects b
 |-----------|---------|-------------|
 | LHOST (Attacker IP) | — | Your IP address for reverse shell callbacks. Leave empty for bind mode |
 | LPORT | — | Your listening port for reverse shells. Leave empty for bind mode |
-| Bind Port on Target | 4444 | Port the target opens when using bind shell payloads |
+| Bind Port on Target | — | Port the target opens when using bind shell payloads. Leave empty if unsure (agent will ask) |
 | Payload Use HTTPS | false | Use `reverse_https` instead of `reverse_tcp` for reverse payloads |
 
 **Agent Limits:**
@@ -785,7 +789,7 @@ Controls how reverse/bind shell payloads connect. **Reverse**: target connects b
 |-----------|---------|-------------|
 | Max Iterations | 100 | Maximum LLM reasoning-action loops per objective |
 | Trace Memory Steps | 100 | Number of past steps kept in the agent's working context |
-| Tool Output Max Chars | 8000 | Truncation limit for tool output passed to the LLM (min: 1000) |
+| Tool Output Max Chars | 20000 | Truncation limit for tool output passed to the LLM (min: 1000) |
 
 **Approval Gates:**
 
@@ -1322,6 +1326,7 @@ LangGraph-based autonomous agent with ReAct pattern.
 
 📖 **[Read Agentic Documentation](agentic/README.AGENTIC.md)**
 📖 **[Metasploit Integration Guide](agentic/README.METASPLOIT.GUIDE.md)**
+📖 **[Attack Paths Architecture](agentic/README.ATTACK_PATHS.md)**
 
 ---
 
@@ -1364,6 +1369,16 @@ Standalone module that scans GitHub repositories, gists, and commit history for 
 - **Graph database linkage** — findings are stored in Neo4j and linked to the target's attack surface graph.
 - **Webapp integration** — triggered from the Graph page via a dedicated "GitHub Hunt" button (requires prior recon data). Logs stream in real-time to a log drawer with 3-phase progress tracking, and results can be downloaded as JSON.
 
+#### Running a GitHub Secret Hunt
+
+1. Configure a **GitHub Personal Access Token** and **Target Organization** in the project settings (see [GitHub Secret Hunting parameters](#github-secret-hunting) for step-by-step token setup)
+2. Navigate to Graph page
+3. Click the **GitHub Hunt** button (enabled only when recon data exists for the project)
+4. Watch real-time logs in the GitHub Hunt logs drawer (3-phase progress: Loading Settings, Scanning Repositories, Complete)
+5. Download the results JSON when complete
+
+> **Note:** The GitHub token is used **exclusively for read-only scanning** — it searches repositories and gists for leaked secrets using pattern matching and entropy analysis. It does not modify, create, or delete any content on GitHub.
+
 ---
 
 ### 8. Test Environments
@@ -1395,6 +1410,7 @@ These containers are designed to be deployed alongside the main stack so the AI 
 | PostgreSQL Database | [postgres_db/README.md](postgres_db/README.md) |
 | MCP Servers | [mcp/README.MCP.md](mcp/README.MCP.md) |
 | AI Agent | [agentic/README.AGENTIC.md](agentic/README.AGENTIC.md) |
+| Attack Paths | [agentic/README.ATTACK_PATHS.md](agentic/README.ATTACK_PATHS.md) |
 | Metasploit Guide | [agentic/README.METASPLOIT.GUIDE.md](agentic/README.METASPLOIT.GUIDE.md) |
 | Webapp | [webapp/README.WEBAPP.md](webapp/README.WEBAPP.md) |
 | GVM Scanner | [gvm_scan/README.GVM.md](gvm_scan/README.GVM.md) |

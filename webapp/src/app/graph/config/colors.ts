@@ -16,6 +16,7 @@ export const NODE_COLORS: Record<string, string> = {
   IP: '#0d9488',             // Teal - Network addresses
   Port: '#0e7490',           // Dark cyan - Network ports
   Service: '#06b6d4',        // Cyan - Running services
+  Traceroute: '#164e63',     // Dark cyan-900 - Network path/route data
 
   // WEB APPLICATION LAYER (Purple family) - Web-specific assets
   BaseURL: '#6366f1',        // Indigo - Web entry points
@@ -23,12 +24,20 @@ export const NODE_COLORS: Record<string, string> = {
   Parameter: '#a855f7',      // Light purple - Inputs (attack surface)
 
   // EXPLOITATION RESULTS (Amber) - Confirmed compromises
-  Exploit: '#f59e0b',        // Amber - Confirmed compromise
+  Exploit: '#f59e0b',        // Amber - Confirmed compromise (AI agent)
+  ExploitGvm: '#ea580c',     // Orange-600 - GVM confirmed exploitation (active check)
 
   // CONTEXT & METADATA (Neutral family) - Supporting information
   Technology: '#22c55e',     // Green - Tech stack (good to know)
   Certificate: '#d97706',    // Amber - TLS/security context
   Header: '#78716c',         // Stone gray - HTTP metadata
+
+  // GITHUB INTELLIGENCE (Gray family for hierarchy, distinct muted colors for leaf nodes)
+  GithubHunt: '#4b5563',           // Gray-600 - scan container node
+  GithubRepository: '#6b7280',     // Gray-500 - repository node
+  GithubPath: '#9ca3af',           // Gray-400 - file path node
+  GithubSecret: '#7c6f9b',        // Muted dusty purple - leaked secret (API key, credential)
+  GithubSensitiveFile: '#5b8a72',  // Muted sage green - sensitive file (.env, config)
 
   Default: '#6b7280',        // Gray - Fallback
 }

@@ -63,6 +63,21 @@ export function GithubSection({ data, updateField }: GithubSectionProps) {
             />
           </div>
 
+          <div className={styles.fieldGroup}>
+            <label className={styles.fieldLabel}>Target Repositories</label>
+            <input
+              type="text"
+              className="textInput"
+              value={data.githubTargetRepos}
+              onChange={(e) => updateField('githubTargetRepos', e.target.value)}
+              placeholder="repo1, repo2, repo3"
+              disabled={!hasToken}
+            />
+            <span className={styles.fieldHint}>
+              Comma-separated list. Leave empty to scan all repositories.
+            </span>
+          </div>
+
           {hasToken && (
             <>
               <div className={styles.subSection}>

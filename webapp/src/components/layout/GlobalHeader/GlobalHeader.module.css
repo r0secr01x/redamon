@@ -29,6 +29,13 @@
   color: var(--accent-primary);
 }
 
+.version {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  font-weight: var(--font-normal);
+  margin-left: var(--space-2);
+}
+
 .spacer {
   flex: 1;
 }

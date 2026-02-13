@@ -36,6 +36,7 @@ except ImportError:
 DEFAULT_GITHUB_SETTINGS = {
     'GITHUB_ACCESS_TOKEN': os.getenv('GITHUB_ACCESS_TOKEN', ''),
     'GITHUB_TARGET_ORG': '',
+    'GITHUB_TARGET_REPOS': '',
     'GITHUB_SCAN_MEMBERS': False,
     'GITHUB_SCAN_GISTS': True,
     'GITHUB_SCAN_COMMITS': True,
@@ -253,6 +254,10 @@ class GitHubSecretHunter:
 
         # Store settings (use defaults if not provided)
         self.settings = settings or DEFAULT_GITHUB_SETTINGS
+
+        # Parse target repos filter (comma-separated → set of lowercase names)
+        repos_str = self.settings.get('GITHUB_TARGET_REPOS', '')
+        self.target_repos = {r.strip().lower() for r in repos_str.split(',') if r.strip()} if repos_str else set()
 
         self.findings: List[Dict] = []
         self.scanned_repos: Set[str] = set()
@@ -497,6 +502,10 @@ class GitHubSecretHunter:
 
     def scan_repo(self, repo):
         """Scan a single repository."""
+        # Filter by target repos if specified
+        if self.target_repos and repo.name.lower() not in self.target_repos:
+            return
+
         if repo.full_name in self.scanned_repos:
             return
 

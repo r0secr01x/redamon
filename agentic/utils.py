@@ -21,13 +21,10 @@ def get_session_config_prompt() -> str:
     """
     Generate a prompt section with pre-configured payload settings.
 
-    Decision Logic:
-        IF LPORT is set (not None, > 0):
-            → Use REVERSE payload (target connects TO attacker)
-            → Requires: LHOST + LPORT
-        ELSE:
-            → Use BIND payload (attacker connects TO target)
-            → Requires: BIND_PORT_ON_TARGET (becomes LPORT in Metasploit)
+    Decision Logic (3-way):
+        REVERSE: LHOST set AND LPORT set  → clear reverse intent
+        BIND:    LHOST empty AND LPORT empty AND BIND_PORT set → clear bind intent
+        ASK:     anything else (discordant or all empty) → agent must ask user
 
     Returns:
         Formatted string with Metasploit commands for the agent.
@@ -35,64 +32,40 @@ def get_session_config_prompt() -> str:
     # Fetch settings: empty string / None = "not set"
     LHOST = get_setting('LHOST', '') or None
     LPORT = get_setting('LPORT')
-    BIND_PORT_ON_TARGET = get_setting('BIND_PORT_ON_TARGET', 4444)
+    BIND_PORT_ON_TARGET = get_setting('BIND_PORT_ON_TARGET')
     PAYLOAD_USE_HTTPS = get_setting('PAYLOAD_USE_HTTPS', False)
 
     # -------------------------------------------------------------------------
-    # CHECK FOR MISSING PARAMETERS
+    # 3-WAY DECISION: reverse / bind / ask user
     # -------------------------------------------------------------------------
-    use_reverse = LPORT is not None and LPORT > 0
-    use_bind = not use_reverse and BIND_PORT_ON_TARGET is not None and BIND_PORT_ON_TARGET > 0
+    has_lhost = bool(LHOST)
+    has_lport = LPORT is not None and LPORT > 0
+    has_bind_port = BIND_PORT_ON_TARGET is not None and BIND_PORT_ON_TARGET > 0
 
-    missing_params = []
-
-    if use_reverse:
-        # REVERSE mode: need LHOST and LPORT
-        if not LHOST:
-            missing_params.append(("LHOST", "Your attacker IP address (e.g., 172.28.0.2, 10.10.14.5)"))
-        # LPORT is already set (that's why use_reverse is True)
-    elif use_bind:
-        # BIND mode: need BIND_PORT_ON_TARGET (already set)
-        pass
+    if has_lhost and has_lport:
+        mode = "reverse"
+    elif not has_lhost and not has_lport and has_bind_port:
+        mode = "bind"
     else:
-        # Neither LPORT nor BIND_PORT_ON_TARGET is set - cannot proceed!
-        missing_params.append(("LPORT or BIND_PORT_ON_TARGET", "Either set LPORT for reverse payload OR BIND_PORT_ON_TARGET for bind payload"))
+        mode = "ask"
 
     lines = []
     lines.append("### Pre-Configured Payload Settings")
     lines.append("")
 
     # -------------------------------------------------------------------------
-    # HANDLE MISSING PARAMETERS - ASK USER
-    # -------------------------------------------------------------------------
-    if missing_params:
-        lines.append("⚠️ **MISSING REQUIRED PARAMETERS - ASK USER BEFORE EXPLOITING!**")
-        lines.append("")
-        lines.append("The following parameters are not configured. You MUST ask the user:")
-        lines.append("")
-        for param, description in missing_params:
-            lines.append(f"- **{param}**: {description}")
-        lines.append("")
-        lines.append("Use `action: \"ask_user\"` to request these values before proceeding.")
-        lines.append("")
-        lines.append("---")
-        lines.append("")
-
-    # -------------------------------------------------------------------------
     # SHOW CONFIGURED MODE
     # -------------------------------------------------------------------------
-    if use_reverse:
+    if mode == "reverse":
         # =====================================================================
         # REVERSE PAYLOAD: Target connects TO attacker (LHOST:LPORT)
         # =====================================================================
-        lhost_display = LHOST if LHOST else "<ASK USER>"
-
         lines.append("**Mode: REVERSE** (target connects to you)")
         lines.append("")
         lines.append("```")
         lines.append("┌─────────────┐                    ┌─────────────┐")
         lines.append("│   TARGET    │ ───connects to───► │  ATTACKER   │")
-        lines.append(f"│             │                    │ {lhost_display}:{LPORT} │")
+        lines.append(f"│             │                    │ {LHOST}:{LPORT} │")
         lines.append("└─────────────┘                    └─────────────┘")
         lines.append("```")
         lines.append("")
@@ -124,16 +97,13 @@ def get_session_config_prompt() -> str:
         lines.append("**Metasploit commands:**")
         lines.append("```")
         lines.append("set PAYLOAD <chosen_payload_from_show_payloads>")
-        if LHOST:
-            lines.append(f"set LHOST {LHOST}")
-        else:
-            lines.append("set LHOST <ASK USER FOR IP>")
+        lines.append(f"set LHOST {LHOST}")
         lines.append(f"set LPORT {LPORT}")
         lines.append("```")
         lines.append("")
         lines.append("After exploit succeeds, use `msf_wait_for_session()` to wait for session.")
 
-    elif use_bind:
+    elif mode == "bind":
         # =====================================================================
         # BIND PAYLOAD: Attacker connects TO target (RHOST:BIND_PORT)
         # =====================================================================
@@ -165,22 +135,30 @@ def get_session_config_prompt() -> str:
 
     else:
         # =====================================================================
-        # NO MODE CONFIGURED - CRITICAL ERROR
+        # ASK USER: settings are empty or discordant
         # =====================================================================
-        lines.append("❌ **NO PAYLOAD MODE CONFIGURED**")
+        lines.append("⚠️ **PAYLOAD DIRECTION NOT CONFIGURED - ASK USER BEFORE EXPLOITING!**")
         lines.append("")
-        lines.append("Neither LPORT nor BIND_PORT_ON_TARGET is set in project settings.")
+        # Show what's currently set so the agent can explain the problem
+        lines.append("**Current settings:**")
+        lines.append(f"- LHOST (Attacker IP): `{LHOST or 'empty'}`")
+        lines.append(f"- LPORT (Attacker Port): `{LPORT or 'empty'}`")
+        lines.append(f"- Bind Port on Target: `{BIND_PORT_ON_TARGET or 'empty'}`")
         lines.append("")
-        lines.append("**Ask the user which mode to use:**")
+        if has_lhost and not has_lport:
+            lines.append("**Problem:** LHOST is set but LPORT is missing. For reverse payloads, both are required.")
+        elif has_lport and not has_lhost:
+            lines.append("**Problem:** LPORT is set but LHOST is missing. For reverse payloads, both are required.")
+        else:
+            lines.append("**Problem:** No payload direction is configured.")
         lines.append("")
-        lines.append("1. **REVERSE** (target connects to you):")
-        lines.append("   - Ask: \"What is your attacker IP (LHOST)?\"")
-        lines.append("   - Ask: \"What port should I listen on (LPORT)? Default: 4444\"")
+        lines.append("**Use `action: \"ask_user\"` to ask which payload mode to use:**")
+        lines.append("")
+        lines.append("1. **REVERSE** (target connects back to you):")
+        lines.append("   - Requires: LHOST (your IP) + LPORT (listening port)")
         lines.append("")
         lines.append("2. **BIND** (you connect to target):")
-        lines.append("   - Ask: \"What port should the target open (BIND_PORT)? Default: 4444\"")
-        lines.append("")
-        lines.append("Use `action: \"ask_user\"` to gather this information.")
+        lines.append("   - Requires: Bind port on target (e.g. 4444)")
 
     lines.append("")
     lines.append("Replace `<os>/<arch>` with target OS (e.g., `linux/x64`, `windows/x64`).")

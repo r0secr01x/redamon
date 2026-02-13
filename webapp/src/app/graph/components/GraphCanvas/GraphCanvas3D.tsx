@@ -151,7 +151,7 @@ export function GraphCanvas3D({
         }
 
         // Use OctahedronGeometry (3D diamond) for Exploit nodes, SphereGeometry for all others
-        const isExploit = graphNode.type === 'Exploit'
+        const isExploit = graphNode.type === 'Exploit' || graphNode.type === 'ExploitGvm'
         const geometry = isExploit
           ? new THREE.OctahedronGeometry(sphereSize * 1.2)
           : new THREE.SphereGeometry(sphereSize, THREE_CONFIG.sphereSegments, THREE_CONFIG.sphereSegments)
