@@ -175,6 +175,26 @@ export function TargetSection({ data, updateField }: TargetSectionProps) {
               </div>
             )}
           </div>
+
+          <div className={styles.subSection}>
+            <h3 className={styles.subSectionTitle}>Stealth Mode</h3>
+            <div className={styles.toggleRow} style={{ gap: 'var(--space-4)' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <span className={styles.toggleLabel}>Enable Stealth Mode</span>
+                <p className={styles.toggleDescription}>
+                  Force the entire pipeline to use only passive and low-noise techniques.
+                  Active scanners (Kiterunner, banner grabbing) are disabled. Port scanning
+                  switches to passive mode. Nuclei disables DAST and interactsh. The AI agent
+                  uses only stealthy methods and will stop if stealth is impossible for a
+                  requested action.
+                </p>
+              </div>
+              <Toggle
+                checked={data.stealthMode}
+                onChange={(checked) => updateField('stealthMode', checked)}
+              />
+            </div>
+          </div>
         </div>
       )}
     </div>

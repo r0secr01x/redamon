@@ -9,7 +9,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react'
-import { Send, Bot, User, Loader2, AlertCircle, Sparkles, RotateCcw, Shield, Target, Zap, HelpCircle, WifiOff, Wifi, Square, Play, Download, Wrench } from 'lucide-react'
+import { Send, Bot, User, Loader2, AlertCircle, Sparkles, RotateCcw, Shield, Target, Zap, HelpCircle, WifiOff, Wifi, Square, Play, Download, Wrench, EyeOff } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
@@ -46,6 +46,19 @@ interface Message {
 
 type ChatItem = Message | ThinkingItem | ToolExecutionItem
 
+/** Format prefixed model names for display (e.g. "openrouter/meta-llama/llama-4" → "llama-4 (OR)") */
+function formatModelDisplay(model: string): string {
+  if (model.startsWith('openrouter/')) {
+    const parts = model.slice('openrouter/'.length).split('/')
+    return `${parts[parts.length - 1]} (OR)`
+  }
+  if (model.startsWith('bedrock/')) {
+    const simplified = model.slice('bedrock/'.length).replace(/^[^.]+\./, '').replace(/-\d{8}-v\d+:\d+$/, '')
+    return `${simplified} (Bedrock)`
+  }
+  return model
+}
+
 interface AIAssistantDrawerProps {
   isOpen: boolean
   onClose: () => void
@@ -55,6 +68,7 @@ interface AIAssistantDrawerProps {
   onResetSession?: () => void
   modelName?: string
   toolPhaseMap?: Record<string, string[]>
+  stealthMode?: boolean
 }
 
 const PHASE_CONFIG = {
@@ -104,6 +118,7 @@ export function AIAssistantDrawer({
   onResetSession,
   modelName,
   toolPhaseMap,
+  stealthMode = false,
 }: AIAssistantDrawerProps) {
   const [chatItems, setChatItems] = useState<ChatItem[]>([])
   const [inputValue, setInputValue] = useState('')
@@ -562,7 +577,7 @@ export function AIAssistantDrawer({
     lines.push(`**Date:** ${new Date().toLocaleString()}  `)
     lines.push(`**Phase:** ${PHASE_CONFIG[currentPhase].label}  `)
     if (iterationCount > 0) lines.push(`**Step:** ${iterationCount}  `)
-    if (modelName) lines.push(`**Model:** ${modelName}  `)
+    if (modelName) lines.push(`**Model:** ${formatModelDisplay(modelName)}  `)
     lines.push('')
     lines.push('---')
     lines.push('')
@@ -961,8 +976,14 @@ export function AIAssistantDrawer({
           <span className={styles.iterationCount}>Step {iterationCount}</span>
         )}
 
+        {stealthMode && (
+          <span className={styles.stealthBadge} title="Stealth Mode — passive/low-noise techniques only">
+            <EyeOff size={11} />
+          </span>
+        )}
+
         {modelName && (
-          <span className={styles.modelBadge}>{modelName}</span>
+          <span className={styles.modelBadge}>{formatModelDisplay(modelName)}</span>
         )}
       </div>
 

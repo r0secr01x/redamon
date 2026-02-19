@@ -53,9 +53,10 @@ flowchart TB
     end
 
     subgraph MCPServers["MCP Servers (Docker)"]
-        NAABU[Naabu Server :8000]
-        CURL[Curl Server :8001]
+        NETRECON[Network Recon Server :8000<br/>curl + naabu + kali_shell + execute_code]
+        NUCLEI[Nuclei Server :8002]
         MSF[Metasploit Server :8003]
+        NMAP[Nmap Server :8004]
     end
 
     subgraph Data["Data Layer"]
@@ -75,14 +76,16 @@ flowchart TB
     TE --> MCP
     TE --> N4J
 
-    MCP --> NAABU
-    MCP --> CURL
+    MCP --> NETRECON
+    MCP --> NUCLEI
     MCP --> MSF
+    MCP --> NMAP
 
     N4J --> NEO4J
     MSF --> KALI
-    NAABU --> KALI
-    CURL --> KALI
+    NETRECON --> KALI
+    NUCLEI --> KALI
+    NMAP --> KALI
 ```
 
 ---
@@ -105,7 +108,8 @@ flowchart TB
 | `prompts/classification.py` | Attack path classification prompt |
 | `prompts/cve_exploit_prompts.py` | CVE exploitation workflow & payload guidance |
 | `prompts/brute_force_credential_guess_prompts.py` | Brute force / credential attack workflow |
-| `prompts/post_exploitation.py` | Post-exploitation prompts (statefull, shell, stateless) |
+| `prompts/post_exploitation.py` | Post-exploitation prompts (statefull, stateless) |
+| `prompts/tool_registry.py` | Single source of truth for tool metadata (names, purposes, args, descriptions) |
 | `orchestrator_helpers/` | Helper modules extracted from orchestrator |
 | `orchestrator_helpers/config.py` | Session config, checkpointer, thread ID management |
 | `orchestrator_helpers/phase.py` | Attack path classification & phase determination |
@@ -144,7 +148,7 @@ classDiagram
     class MCPToolsManager {
         +servers: List[MCPServer]
         +tools_cache: Dict
-        +get_tools()
+        +get_tools(max_retries, retry_delay)
         +call_tool(tool_name, args)
     }
 
@@ -293,14 +297,15 @@ flowchart LR
     end
 
     subgraph ThinkDesc["Think Node - Single LLM Call"]
-        T1[Build system prompt with attack-path-specific tools]
+        T1[Build system prompt with dynamic tool registry]
         T2[If pending tool output: inject output analysis section]
-        T3[Format execution trace with objective grouping]
+        T3[Format execution trace with compact/full formatting]
         T4[Get LLM decision JSON with inline output_analysis]
         T5[Parse action: use_tool/transition_phase/complete/ask_user]
         T6[Process output_analysis: merge target info, detect exploits]
         T7[Update todo list]
         T8[Pre-exploitation validation: force ask_user if LHOST/LPORT missing]
+        T9[Failure loop detection: inject warning after 3+ similar failures]
     end
 
     subgraph ExecDesc["Execute Tool Node"]
@@ -367,6 +372,7 @@ flowchart TB
 class AttackPathClassification(BaseModel):
     required_phase: Phase           # "informational" or "exploitation"
     attack_path_type: AttackPathType  # "cve_exploit" or "brute_force_credential_guess"
+    secondary_attack_path: Optional[str]  # Fallback path if primary fails (e.g., brute_force after CVE fails)
     confidence: float               # 0.0-1.0 confidence score
     reasoning: str                  # Explanation for the classification
     detected_service: Optional[str] # e.g., "ssh", "mysql" (for brute force)
@@ -376,13 +382,17 @@ The classifier runs with retry logic (exponential backoff, max 3 retries) and fa
 
 ### Dynamic Tool Routing
 
+Tool availability is now **database-driven** via `TOOL_PHASE_MAP` in project settings. The prompt system uses a **Tool Registry** (`prompts/tool_registry.py`) as the single source of truth for all tool metadata. Dynamic prompt builders generate tool tables, argument references, and phase definitions at runtime — only showing tools that are actually allowed in the current phase.
+
 Based on the classified attack path, `get_phase_tools()` assembles different prompt guidance:
 
 | Phase | CVE Exploit Path | Brute Force Path |
 |-------|-----------------|------------------|
-| **Informational** | Standard recon tools | Standard recon tools |
-| **Exploitation** | `CVE_EXPLOIT_TOOLS` + payload guidance (statefull/stateless) | `BRUTE_FORCE_CREDENTIAL_GUESS_TOOLS` + wordlist guidance |
-| **Post-Exploitation** | `POST_EXPLOITATION_TOOLS_STATEFULL` (Meterpreter or Shell) | `POST_EXPLOITATION_TOOLS_STATEFULL` (same unified prompt) |
+| **Informational** | Dynamic recon tool descriptions (from registry) | Dynamic recon tool descriptions (from registry) |
+| **Exploitation** | `CVE_EXPLOIT_TOOLS` + payload guidance + no-module fallback (if MSF search failed) | `BRUTE_FORCE_CREDENTIAL_GUESS_TOOLS` + wordlist guidance |
+| **Post-Exploitation** | `POST_EXPLOITATION_TOOLS_STATEFULL` (unified for Meterpreter and shell sessions) | `POST_EXPLOITATION_TOOLS_STATEFULL` (same unified prompt) |
+
+**No-Module Fallback**: When a `search CVE-*` command returns no results in Metasploit, the system injects a fallback workflow (`NO_MODULE_FALLBACK_STATEFULL` or `NO_MODULE_FALLBACK_STATELESS`) that guides the agent to exploit the CVE using `execute_curl`, `execute_code`, `kali_shell`, or `execute_nuclei` instead. This saves ~1,100-1,350 tokens when a module IS found.
 
 ### Pre-Exploitation Validation
 
@@ -441,12 +451,17 @@ flowchart TB
 
     subgraph InfoTools["Informational Tools"]
         QG[query_graph<br/>Neo4j queries]
-        CURL[execute_curl<br/>HTTP requests]
+        WS[web_search<br/>Tavily web search]
+        CURL[execute_curl<br/>HTTP requests & vuln probing]
         NAABU[execute_naabu<br/>Port scanning]
+        NMAP_T[execute_nmap<br/>Deep scanning & NSE scripts]
+        NUCLEI_T[execute_nuclei<br/>CVE verification]
+        KALI[kali_shell<br/>General Kali shell]
     end
 
     subgraph ExplTools["Exploitation Tools"]
         MSF[metasploit_console<br/>msfconsole commands]
+        CODE[execute_code<br/>Code execution, no escaping]
     end
 
     subgraph PostTools["Post-Exploitation Tools"]
@@ -478,7 +493,7 @@ sequenceDiagram
     participant K as Kali Container
 
     O->>TE: execute("naabu", {target: "192.168.1.1"}, "informational")
-    TE->>TE: Validate phase allows tool
+    TE->>TE: Validate phase allows tool (via TOOL_PHASE_MAP)
     TE->>TE: set_tenant_context(user_id, project_id)
     TE->>MCP: call_tool("naabu", args)
     MCP->>S: HTTP POST /tools/naabu
@@ -488,6 +503,16 @@ sequenceDiagram
     MCP-->>TE: Formatted output
     TE-->>O: {success: true, output: "..."}
 ```
+
+### MCP Connection Retry Logic
+
+The `MCPToolsManager.get_tools()` method includes retry logic with exponential backoff to handle MCP server startup races:
+
+```
+Attempt 1 → fail → wait 10s → Attempt 2 → fail → wait 20s → ... → Attempt 5 → fail → continue without MCP tools
+```
+
+This prevents the agent from crash-looping when the Kali sandbox container takes longer to start than the agent.
 
 ### Neo4j Query Flow (Text-to-Cypher)
 
@@ -1267,6 +1292,32 @@ flowchart TB
 
 ---
 
+## Prompt Token Optimization
+
+### Compact Execution Trace
+
+To reduce token usage as sessions grow longer, the execution trace formatter uses a **compact/full** split:
+
+- **Recent steps** (last 5): Full formatting with complete tool output and analysis — essential for exploitation workflows where the agent must reference previous search/info results.
+- **Older steps**: Compact formatting — tool output is omitted, args truncated to 200 chars, analysis truncated to 1,000 chars. The agent retains awareness of what happened without consuming excessive tokens.
+
+### Conditional Prompt Injection
+
+Several prompt sections are only injected when relevant:
+
+| Prompt Section | Condition |
+|---------------|-----------|
+| No-module fallback workflow | Only after `search CVE-*` returns no results |
+| Failure loop warning | Only after 3+ consecutive similar failures |
+| Mode decision matrix | Only in exploitation phase for CVE exploit path |
+| Session config (LHOST/LPORT) | Only in statefull exploitation mode |
+
+### Failure Loop Detection
+
+The orchestrator monitors the execution trace for repeated failures. When 3+ consecutive steps fail with a similar tool/args pattern, a `## FAILURE LOOP DETECTED` warning is injected into the system prompt, instructing the agent to try a completely different strategy (web_search for alternatives, different tool/payload, or ask_user for guidance).
+
+---
+
 ## Error Handling & Resilience
 
 ### LLM Response Parsing
@@ -1348,7 +1399,7 @@ flowchart LR
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `OPENAI_MODEL` | `"gpt-5.2"` | LLM model for reasoning |
+| `OPENAI_MODEL` | `"claude-opus-4-6"` | LLM model for reasoning |
 | `MAX_ITERATIONS` | `100` | Maximum ReAct loop iterations |
 | `EXECUTION_TRACE_MEMORY_STEPS` | `100` | How many steps to include in LLM context |
 | `TOOL_OUTPUT_MAX_CHARS` | `20000` | Truncate tool output for LLM analysis |
@@ -1366,6 +1417,24 @@ flowchart LR
 | `POST_EXPL_SYSTEM_PROMPT` | `""` | Custom system prompt injected during post-exploitation phase |
 | `CYPHER_MAX_RETRIES` | `3` | Neo4j text-to-Cypher retry limit |
 | `CREATE_GRAPH_IMAGE_ON_INIT` | `false` | Export LangGraph structure as PNG on startup |
+| `TOOL_PHASE_MAP` | *(see below)* | Per-tool phase access control (DB-driven) |
+
+#### Default TOOL_PHASE_MAP
+
+```json
+{
+  "query_graph": ["informational", "exploitation", "post_exploitation"],
+  "execute_curl": ["informational", "exploitation", "post_exploitation"],
+  "execute_naabu": ["informational", "exploitation", "post_exploitation"],
+  "execute_nmap": ["informational", "exploitation", "post_exploitation"],
+  "execute_nuclei": ["informational", "exploitation", "post_exploitation"],
+  "kali_shell": ["informational", "exploitation", "post_exploitation"],
+  "execute_code": ["exploitation", "post_exploitation"],
+  "metasploit_console": ["exploitation", "post_exploitation"],
+  "msf_restart": ["exploitation", "post_exploitation"],
+  "web_search": ["informational", "exploitation", "post_exploitation"]
+}
+```
 
 ### Environment Variables
 
@@ -1377,10 +1446,25 @@ flowchart LR
 | `NEO4J_PASSWORD` | Yes | Neo4j password |
 | `PROJECT_ID` | For DB settings | Project ID to fetch settings for |
 | `WEBAPP_API_URL` | For DB settings | Webapp base URL (e.g., `http://localhost:3000`) |
+| `MCP_NETWORK_RECON_URL` | No | Network recon MCP server URL (default: `http://host.docker.internal:8000/sse`) |
+| `MCP_NMAP_URL` | No | Nmap MCP server URL (default: `http://host.docker.internal:8004/sse`) |
+| `MCP_METASPLOIT_URL` | No | Metasploit MCP server URL (default: `http://host.docker.internal:8003/sse`) |
+| `MCP_NUCLEI_URL` | No | Nuclei MCP server URL (default: `http://host.docker.internal:8002/sse`) |
 
 ---
 
 ## Running the System
+
+### MCP Server Architecture
+
+The MCP layer runs inside a single Kali Linux Docker container with multiple FastMCP servers:
+
+| Server | Port | Tools | Description |
+|--------|------|-------|-------------|
+| `network_recon` | 8000 | `execute_curl`, `execute_naabu`, `kali_shell`, `execute_code` | HTTP client, port scanner, general shell, code execution |
+| `nuclei` | 8002 | `execute_nuclei` | CVE verification & exploitation via YAML templates |
+| `metasploit` | 8003 | `metasploit_console`, `msf_restart`, `msf_session_run`, `msf_wait_for_session`, `msf_list_sessions` | Exploitation framework |
+| `nmap` | 8004 | `execute_nmap` | Deep network scanning, service detection, NSE scripts |
 
 ### Start MCP Servers
 
@@ -1442,13 +1526,19 @@ The RedAmon Agentic System provides:
 
 1. **Autonomous Reasoning** - LangGraph-based ReAct pattern for intelligent decision making
 2. **Phase-Based Security** - Controlled progression through informational → exploitation → post-exploitation
-3. **Attack Path Classification** - LLM-based classification of objectives into CVE exploit or brute force paths, with dynamic tool routing
-4. **Human Oversight** - Approval workflows for risky phase transitions and pre-exploitation validation
-5. **Real-Time Feedback** - WebSocket streaming with progress chunks for long-running commands
-6. **Live Guidance** - Send steering messages while the agent works, injected into the next think step
-7. **Stop & Resume** - Interrupt agent execution and resume from the last LangGraph checkpoint
-8. **Multi-Tenancy** - Isolated sessions with tenant-filtered data access
-9. **Stateful Exploitation** - Persistent Metasploit sessions with auto-reset and session/credential detection
-10. **Multi-Objective Support** - Continuous conversations with context preservation and per-objective attack path classification
-11. **Database-Driven Configuration** - All settings fetched from PostgreSQL via webapp API, with standalone defaults fallback
-12. **Custom Phase Prompts** - Per-phase system prompt injection for project-specific agent behavior
+3. **Attack Path Classification** - LLM-based classification of objectives into CVE exploit or brute force paths, with secondary fallback path support
+4. **Dynamic Tool Registry** - Single source of truth (`tool_registry.py`) drives all prompt generation; tool availability tables, argument references, and phase definitions are built at runtime from DB-driven `TOOL_PHASE_MAP`
+5. **Human Oversight** - Approval workflows for risky phase transitions and pre-exploitation validation
+6. **Real-Time Feedback** - WebSocket streaming with progress chunks for long-running commands
+7. **Live Guidance** - Send steering messages while the agent works, injected into the next think step
+8. **Stop & Resume** - Interrupt agent execution and resume from the last LangGraph checkpoint
+9. **Multi-Tenancy** - Isolated sessions with tenant-filtered data access
+10. **Stateful Exploitation** - Persistent Metasploit sessions with auto-reset and session/credential detection
+11. **No-Module Fallback** - When Metasploit has no module for a CVE, the agent falls back to manual exploitation using curl, nuclei, code execution, and Kali shell tools
+12. **Failure Loop Detection** - Detects 3+ consecutive similar failures and forces the agent to pivot to a different strategy
+13. **Token Optimization** - Compact formatting for older execution trace steps; conditional prompt injection to minimize token usage
+14. **Expanded Kali Tooling** - nmap, nuclei, kali_shell (netcat, socat, sqlmap, john, searchsploit, msfvenom, gcc/g++), and execute_code for shell-escaping-free script execution
+15. **Multi-Objective Support** - Continuous conversations with context preservation and per-objective attack path classification
+16. **Database-Driven Configuration** - All settings fetched from PostgreSQL via webapp API, with standalone defaults fallback
+17. **Custom Phase Prompts** - Per-phase system prompt injection for project-specific agent behavior
+18. **MCP Retry Logic** - Exponential backoff retry for MCP server connections to handle container startup races

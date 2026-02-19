@@ -2,7 +2,7 @@
 
 Comprehensive documentation of all Metasploit attack path categories and the proposed Agent Routing system for intelligent attack chain orchestration.
 
-> **Context**: The current RedAmon agent implementation supports CVE-based exploitation chains. This document defines all possible attack path categories to enable evolution toward a multi-path routing system.
+> **Context**: The RedAmon agent supports CVE-based exploitation and brute force credential guess chains, with no-module fallback workflows using nuclei, curl, code execution, and Kali shell tools. This document defines all possible attack path categories to enable evolution toward a multi-path routing system.
 
 ---
 
@@ -29,9 +29,25 @@ Comprehensive documentation of all Metasploit attack path categories and the pro
 
 ## Current Implementation Analysis
 
-### Existing CVE-Based Attack Chain
+### Implemented Attack Chains
 
-The current orchestrator (`orchestrator.py`) implements a single attack path category: **CVE-Based Exploitation**.
+The orchestrator (`orchestrator.py`) implements two classified attack path categories: **CVE-Based Exploitation** and **Brute Force / Credential Guess**, plus a **No-Module Fallback** workflow for CVEs without Metasploit modules.
+
+#### Available Tools (across all phases)
+
+| Tool | Server | Phase | Description |
+|------|--------|-------|-------------|
+| `query_graph` | Agent (Neo4j) | All | Neo4j graph database queries |
+| `web_search` | Agent (Tavily) | All | Web search for CVE/exploit research |
+| `execute_curl` | Network Recon :8000 | All | HTTP requests & vulnerability probing |
+| `execute_naabu` | Network Recon :8000 | All | Fast port scanning |
+| `execute_nmap` | Nmap :8004 | All | Deep scanning, NSE scripts |
+| `execute_nuclei` | Nuclei :8002 | All | CVE verification via YAML templates |
+| `kali_shell` | Network Recon :8000 | All | General Kali shell (netcat, socat, searchsploit, msfvenom, sqlmap, john, etc.) |
+| `execute_code` | Network Recon :8000 | Expl + Post | Code execution without shell escaping (Python, bash, C, etc.) |
+| `metasploit_console` | Metasploit :8003 | Expl + Post | Metasploit Framework commands |
+
+### Existing CVE-Based Attack Chain
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -55,13 +71,12 @@ The current orchestrator (`orchestrator.py`) implements a single attack path cat
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Limitations of Current Approach
+### Remaining Limitations
 
-1. **Single Entry Point**: Only supports `search CVE-*` as starting command
-2. **Assumes Exploit Module**: Designed for `exploit/*` modules only
-3. **Fixed Workflow**: 12-step sequence doesn't adapt to different attack types
-4. **No Auxiliary Support**: Brute force, scanning, fuzzing not natively supported
-5. **No Social Engineering**: Phishing, client-side attacks not supported
+1. **Two Attack Paths**: Only CVE exploit and brute force credential guess are fully implemented
+2. **No Social Engineering**: Phishing, client-side attacks not yet supported as classified paths
+3. **No DoS/Fuzzing Chains**: DoS and fuzzing workflows not yet implemented as classified paths
+4. **No Credential Capture**: MITM/capture chains not yet implemented
 
 ---
 
@@ -1053,15 +1068,16 @@ INTENT_ROUTER_PROMPT = """Analyze the user request and determine the attack path
 
 ### Chain-Specific Workflow Prompts
 
-Each attack category needs its own workflow guidance in the system prompt:
+Each attack category needs its own workflow guidance in the system prompt. CVE exploit and brute force paths are fully implemented. The no-module fallback workflow is also complete:
 
 ```python
-# Proposed chain-specific guidance
+# Chain-specific guidance (implemented paths marked ✅)
 
 CHAIN_WORKFLOWS = {
-    "cve_exploit": EXPLOITATION_TOOLS,  # Current implementation
+    "cve_exploit": CVE_EXPLOIT_TOOLS,  # ✅ Implemented
+    # + NO_MODULE_FALLBACK_STATEFULL / NO_MODULE_FALLBACK_STATELESS (✅ auto-injected when MSF search fails)
 
-    "brute_force": """
+    "brute_force": """  # ✅ Implemented as BRUTE_FORCE_CREDENTIAL_GUESS_TOOLS
 ## Brute Force Attack Workflow
 
 1. `use auxiliary/scanner/<protocol>/<protocol>_login`
@@ -1186,6 +1202,7 @@ Some attack paths naturally chain into others:
 - [x] `ATTACK_PATH_CLASSIFICATION_PROMPT` in `prompts/classification.py`
 - [x] `AttackPathClassification` Pydantic model in `state.py`
 - [x] Returns both `attack_path_type` and `required_phase`
+- [x] `secondary_attack_path` field for fallback classification
 - [x] Retry logic with exponential backoff for resilience
 
 ### Phase 2: Chain-Specific Workflows (COMPLETED for brute_force_credential_guess)
@@ -1194,11 +1211,30 @@ Some attack paths naturally chain into others:
 - [ ] Create `CAPTURE_TOOLS` prompt
 - [ ] Create `SOCIAL_ENGINEERING_TOOLS` prompt
 - [x] Updated `get_phase_tools()` to route based on `attack_path_type`
+- [x] Dynamic tool routing from DB-driven `TOOL_PHASE_MAP` (replaces hardcoded tool lists)
+- [x] Tool Registry (`prompts/tool_registry.py`) as single source of truth for tool metadata
+
+### Phase 2.5: No-Module Fallback Workflows (COMPLETED)
+- [x] `NO_MODULE_FALLBACK_STATEFULL` — when `search CVE-*` returns no MSF module, guides agent to exploit manually using `execute_curl`, `execute_code`, `kali_shell`, or `execute_nuclei` to establish a session
+- [x] `NO_MODULE_FALLBACK_STATELESS` — same, but for stateless mode (prove RCE only, no session needed)
+- [x] Conditional injection: fallback prompt only loaded after MSF search failure (saves ~1,100-1,350 tokens per iteration when a module IS found)
+- [x] Multi-tool exploitation: `execute_nuclei` (CVE templates), `execute_curl` (HTTP probing), `execute_code` (Python/bash scripts without shell escaping), `kali_shell` (PoC downloads, msfvenom, searchsploit)
+
+### Phase 2.6: Expanded Kali Tooling (COMPLETED)
+- [x] New MCP tools: `execute_nmap` (deep scanning, NSE scripts), `execute_nuclei` (CVE verification), `kali_shell` (general Kali shell), `execute_code` (code execution without shell escaping)
+- [x] Consolidated MCP servers: `curl_server.py` + `naabu_server.py` → `network_recon_server.py` (port 8000), new `nmap_server.py` (port 8004)
+- [x] Kali sandbox expanded: netcat, socat, rlwrap, exploitdb (searchsploit), john, smbclient, sqlmap, jq, gcc/g++/make, perl
+- [x] MCP connection retry logic with exponential backoff (5 retries, 10s base delay)
 
 ### Phase 3: Dynamic Post-Exploitation Handling (COMPLETED)
 - [x] Added `attack_path_type` to state (`AgentState`)
-- [x] Created unified `POST_EXPLOITATION_TOOLS_STATEFULL` for both Meterpreter and shell sessions
+- [x] Created unified `POST_EXPLOITATION_TOOLS_STATEFULL` for both Meterpreter and shell sessions (removed separate `POST_EXPLOITATION_TOOLS_SHELL`)
 - [x] Handle chains that don't have post-exploitation (DoS, Fuzzing) - TBD
+
+### Phase 3.5: Token Optimization & Resilience (COMPLETED)
+- [x] Compact execution trace formatting: older steps (beyond last 5) omit raw tool output, truncate args/analysis
+- [x] Failure loop detection: 3+ consecutive similar failures inject warning forcing agent to pivot strategy
+- [x] Conditional prompt injection: no-module fallback, mode matrix, session config only loaded when needed
 
 ### Phase 4: Attack Path Chaining
 - [ ] Detect when one attack path should chain to another
@@ -1245,6 +1281,6 @@ Some attack paths naturally chain into others:
 
 ---
 
-*Document Version: 2.0*
-*Last Updated: 2026-01-31*
+*Document Version: 2.1*
+*Last Updated: 2026-02-19*
 *Author: RedAmon Development Team*

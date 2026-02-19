@@ -10,7 +10,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from state import AttackPathClassification
 from prompts import ATTACK_PATH_CLASSIFICATION_PROMPT
-from .json_utils import extract_json
+from .json_utils import normalize_content, extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ async def classify_attack_path(
     for attempt in range(max_retries):
         try:
             response = await llm.ainvoke(messages)
-            json_str = extract_json(response.content)
+            json_str = extract_json(normalize_content(response.content))
 
             if json_str:
                 data = json.loads(json_str)

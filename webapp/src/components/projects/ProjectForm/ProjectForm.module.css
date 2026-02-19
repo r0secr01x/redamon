@@ -320,3 +320,153 @@
   margin-top: var(--space-0-5);
   line-height: 1;
 }
+
+/* =============================================================================
+   Model Selector (searchable dropdown)
+   ============================================================================= */
+
+.modelSelector {
+  position: relative;
+}
+
+.modelSelectorInput {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1-5) var(--space-2);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-default);
+  cursor: pointer;
+  transition: var(--transition-all);
+  min-height: 32px;
+}
+
+.modelSelectorInput:hover {
+  border-color: var(--text-tertiary);
+}
+
+.modelSelectorInputFocused {
+  border-color: var(--accent-secondary);
+  box-shadow: 0 0 0 2px var(--border-focus);
+}
+
+.modelSearchInput {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  min-width: 0;
+}
+
+.modelSearchInput::placeholder {
+  color: var(--text-tertiary);
+}
+
+.modelSelectedText {
+  flex: 1;
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelSelectorIcon {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+.modelSelectorSpinner {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  animation: spin 1s linear infinite;
+}
+
+.modelDropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-default);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 50;
+}
+
+.modelDropdownEmpty {
+  padding: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.modelGroup {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.modelGroup:last-child {
+  border-bottom: none;
+}
+
+.modelGroupHeader {
+  padding: var(--space-1-5) var(--space-2);
+  font-size: 10px;
+  font-weight: var(--font-semibold);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  background: var(--bg-tertiary);
+  position: sticky;
+  top: 0;
+}
+
+.modelOption {
+  padding: var(--space-1-5) var(--space-2);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.modelOption:hover {
+  background: var(--bg-hover);
+}
+
+.modelOptionSelected {
+  background: color-mix(in srgb, var(--accent-secondary) 15%, transparent);
+}
+
+.modelOptionMain {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.modelOptionName {
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelOptionCtx {
+  flex-shrink: 0;
+  font-size: 9px;
+  color: var(--text-tertiary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 1px 4px;
+}
+
+.modelOptionDesc {
+  display: block;
+  font-size: 9px;
+  color: var(--text-tertiary);
+  margin-top: 1px;
+}

@@ -35,6 +35,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     'UPDATE_GRAPH_DB': True,
     'USE_TOR_FOR_RECON': False,
     'USE_BRUTEFORCE_FOR_SUBDOMAINS': True,
+    'STEALTH_MODE': False,
 
     # WHOIS/DNS
     'WHOIS_MAX_RETRIES': 6,
@@ -330,6 +331,7 @@ def fetch_project_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     settings['UPDATE_GRAPH_DB'] = project.get('updateGraphDb', DEFAULT_SETTINGS['UPDATE_GRAPH_DB'])
     settings['USE_TOR_FOR_RECON'] = project.get('useTorForRecon', DEFAULT_SETTINGS['USE_TOR_FOR_RECON'])
     settings['USE_BRUTEFORCE_FOR_SUBDOMAINS'] = project.get('useBruteforceForSubdomains', DEFAULT_SETTINGS['USE_BRUTEFORCE_FOR_SUBDOMAINS'])
+    settings['STEALTH_MODE'] = project.get('stealthMode', DEFAULT_SETTINGS['STEALTH_MODE'])
 
     # WHOIS/DNS
     settings['WHOIS_MAX_RETRIES'] = project.get('whoisMaxRetries', DEFAULT_SETTINGS['WHOIS_MAX_RETRIES'])
@@ -581,3 +583,93 @@ def reload_settings() -> dict[str, Any]:
     global _settings
     _settings = get_settings()
     return _settings
+
+
+# =============================================================================
+# STEALTH MODE OVERRIDES
+# =============================================================================
+
+def apply_stealth_overrides(settings: dict[str, Any]) -> dict[str, Any]:
+    """
+    Apply stealth mode overrides to all recon tool settings.
+
+    When STEALTH_MODE is True, forces all tools to use passive/low-noise
+    techniques. Noisy tools (Kiterunner, banner grabbing) are disabled entirely.
+
+    Args:
+        settings: The full settings dictionary
+
+    Returns:
+        Modified settings dictionary with stealth overrides applied
+    """
+    if not settings.get('STEALTH_MODE', False):
+        return settings
+
+    logger.info("STEALTH MODE ENABLED — applying passive/low-noise overrides to all recon tools")
+
+    # --- Naabu Port Scanner: passive mode only ---
+    settings['NAABU_PASSIVE_MODE'] = True
+    settings['NAABU_RATE_LIMIT'] = 10
+    settings['NAABU_THREADS'] = 1
+    settings['NAABU_SCAN_TYPE'] = 'c'  # CONNECT scan (no raw SYN)
+    settings['NAABU_SKIP_HOST_DISCOVERY'] = True
+
+    # --- httpx HTTP Probing: low-rate, disable fingerprinting ---
+    settings['HTTPX_THREADS'] = 1
+    settings['HTTPX_RATE_LIMIT'] = 2
+    settings['HTTPX_PROBE_JARM'] = False      # JARM = 10 TLS connections per target
+    settings['HTTPX_PROBE_FAVICON'] = False    # Extra HTTP requests for hashing
+
+    # --- Katana Web Crawler: minimal crawl ---
+    settings['KATANA_DEPTH'] = 1
+    settings['KATANA_RATE_LIMIT'] = 2
+    settings['KATANA_MAX_URLS'] = 50
+    settings['KATANA_JS_CRAWL'] = False  # JS rendering = headless browser = noisy
+
+    # --- GAU: enable it (passive source) but throttle verification ---
+    settings['GAU_ENABLED'] = True
+    settings['GAU_VERIFY_RATE_LIMIT'] = 2
+    settings['GAU_VERIFY_THREADS'] = 1
+    settings['GAU_METHOD_DETECT_RATE_LIMIT'] = 2
+    settings['GAU_METHOD_DETECT_THREADS'] = 1
+
+    # --- Nuclei: passive-only scanning ---
+    settings['NUCLEI_DAST_MODE'] = False       # No active fuzzing
+    settings['NUCLEI_INTERACTSH'] = False      # No OOB callbacks
+    settings['NUCLEI_RATE_LIMIT'] = 5
+    settings['NUCLEI_CONCURRENCY'] = 2
+    settings['NUCLEI_BULK_SIZE'] = 5
+    settings['NUCLEI_HEADLESS'] = False
+    # Exclude intrusive template tags
+    existing_exclude = settings.get('NUCLEI_EXCLUDE_TAGS', [])
+    stealth_exclude = ['dos', 'fuzz', 'intrusive', 'sqli', 'rce']
+    settings['NUCLEI_EXCLUDE_TAGS'] = list(set(existing_exclude + stealth_exclude))
+
+    # --- Kiterunner: DISABLED (active brute-force API discovery) ---
+    settings['KITERUNNER_ENABLED'] = False
+
+    # --- Banner Grabbing: DISABLED (direct socket connections) ---
+    settings['BANNER_GRAB_ENABLED'] = False
+
+    # --- Subdomain Brute Force: DISABLED ---
+    settings['USE_BRUTEFORCE_FOR_SUBDOMAINS'] = False
+
+    # --- Security Checks: disable active checks, keep passive ones ---
+    # Active checks (make network connections to target)
+    settings['SECURITY_CHECK_DIRECT_IP_HTTP'] = False
+    settings['SECURITY_CHECK_DIRECT_IP_HTTPS'] = False
+    settings['SECURITY_CHECK_WAF_BYPASS'] = False
+    settings['SECURITY_CHECK_ZONE_TRANSFER'] = False
+    settings['SECURITY_CHECK_ADMIN_PORT_EXPOSED'] = False
+    settings['SECURITY_CHECK_DATABASE_EXPOSED'] = False
+    settings['SECURITY_CHECK_REDIS_NO_AUTH'] = False
+    settings['SECURITY_CHECK_KUBERNETES_API_EXPOSED'] = False
+    settings['SECURITY_CHECK_SMTP_OPEN_RELAY'] = False
+    settings['SECURITY_CHECK_NO_RATE_LIMITING'] = False
+    # Passive checks remain enabled (SPF, DMARC, DNSSEC, TLS expiry, headers)
+
+    logger.info("Stealth overrides applied: Naabu=passive, httpx=low-rate, Katana=minimal, "
+                "Nuclei=no-DAST, Kiterunner=OFF, BannerGrab=OFF, BruteForce=OFF, "
+                "ActiveSecurityChecks=OFF")
+
+    return settings

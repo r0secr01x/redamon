@@ -11,14 +11,22 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/v1.2.0-release-brightgreen?style=for-the-badge" alt="Version 1.2.0"/>
-  <img src="https://img.shields.io/badge/WARNING-SECURITY%20TOOL-red?style=for-the-badge" alt="Security Tool Warning"/>
-  <img src="https://img.shields.io/badge/LICENSE-MIT-blue?style=for-the-badge" alt="MIT License"/>
+  <img src="https://img.shields.io/badge/v1.3.0-release-2E8B57?style=for-the-badge" alt="Version 1.3.0"/>
+  <img src="https://img.shields.io/badge/WARNING-SECURITY%20TOOL-B22222?style=for-the-badge" alt="Security Tool Warning"/>
+  <img src="https://img.shields.io/badge/LICENSE-MIT-4169A1?style=for-the-badge" alt="MIT License"/>
   <br/>
-  <img src="https://img.shields.io/badge/AI-AUTONOMOUS%20AGENT-blueviolet?style=for-the-badge&logo=openai&logoColor=white" alt="AI Powered"/>
-  <img src="https://img.shields.io/badge/ZERO-HUMAN%20INTERVENTION-orange?style=for-the-badge" alt="Zero Click"/>
-  <img src="https://img.shields.io/badge/Kali-Powered-557C94?style=for-the-badge&logo=kalilinux&logoColor=white" alt="Kali Powered"/>
-  <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker"/>
+  <img src="https://img.shields.io/badge/AI-AUTONOMOUS%20AGENT-6A5ACD?style=for-the-badge&logo=openai&logoColor=white" alt="AI Powered"/>
+  <img src="https://img.shields.io/badge/400+-AI%20MODELS-04A878?style=for-the-badge&logo=huggingface&logoColor=white" alt="400+ AI Models"/>
+  <img src="https://img.shields.io/badge/ZERO-HUMAN%20INTERVENTION-CC7722?style=for-the-badge" alt="Zero Click"/>
+  <img src="https://img.shields.io/badge/Kali-Powered-466A7A?style=for-the-badge&logo=kalilinux&logoColor=white" alt="Kali Powered"/>
+  <img src="https://img.shields.io/badge/Docker-Compose-1A7EC2?style=for-the-badge&logo=docker&logoColor=white" alt="Docker"/>
+  <br/>
+  <img src="https://img.shields.io/badge/FULL-KILL%20CHAIN-A01025?style=for-the-badge" alt="Full Kill Chain"/>
+  <img src="https://img.shields.io/badge/%F0%9F%9B%A9%EF%B8%8F-STEALTH%20MODE-1a1a2e?style=for-the-badge" alt="Stealth Mode"/>
+  <img src="https://img.shields.io/badge/30+-SECURITY%20TOOLS-CC8F00?style=for-the-badge&logo=hack-the-box&logoColor=white" alt="30+ Security Tools"/>
+  <img src="https://img.shields.io/badge/9,000+-VULN%20TEMPLATES-C2185B?style=for-the-badge" alt="9,000+ Vuln Templates"/>
+  <img src="https://img.shields.io/badge/170K+-NETWORK%20NVTs-8E3FA0?style=for-the-badge" alt="170K+ NVTs"/>
+  <img src="https://img.shields.io/badge/180+-PROJECT%20SETTINGS-00899B?style=for-the-badge" alt="180+ Settings"/>
 </p>
 
 > **LEGAL DISCLAIMER**: This tool is intended for **authorized security testing**, **educational purposes**, and **research only**. Never use this system to scan, probe, or attack any system you do not own or have explicit written permission to test. Unauthorized access is **illegal** and punishable by law. By using this tool, you accept **full responsibility** for your actions. **[Read Full Disclaimer](DISCLAIMER.md)**
@@ -52,6 +60,15 @@ ANTHROPIC_API_KEY=sk-ant-...   # recommended
 OPENAI_API_KEY=sk-proj-...
 ```
 Get your key from [Anthropic Console](https://console.anthropic.com/) or [OpenAI Platform](https://platform.openai.com/api-keys).
+
+**Additional AI providers** (optional — add these to unlock more models):
+```env
+OPENROUTER_API_KEY=sk-or-...   # OpenRouter — access 300+ models (Llama, Gemini, Mistral, etc.) via openrouter.ai
+AWS_ACCESS_KEY_ID=AKIA...      # AWS Bedrock — access foundation models (Claude, Titan, Llama, etc.)
+AWS_SECRET_ACCESS_KEY=...      # AWS Bedrock secret key
+AWS_DEFAULT_REGION=us-east-1   # AWS Bedrock region (default: us-east-1)
+```
+The model selector in the project settings **dynamically fetches** available models from each provider whose API key is configured. Only providers with valid keys are shown.
 
 **Optional keys** (add these for extra capabilities):
 ```env
@@ -152,6 +169,7 @@ No rebuild needed — just restart.
 - [Overview](#overview)
   - [Reconnaissance Pipeline](#reconnaissance-pipeline)
   - [AI Agent Orchestrator](#ai-agent-orchestrator)
+  - [AI Model Providers](#ai-model-providers)
   - [GitHub Secret Hunter](#github-secret-hunter)
   - [GVM Vulnerability Scanner](#gvm-vulnerability-scanner-optional)
   - [Attack Surface Graph](#attack-surface-graph)
@@ -384,9 +402,61 @@ The agent executes security tools through the **Model Context Protocol**, with e
 | **execute_naabu** | Fast port scanning and service detection | All phases |
 | **execute_nmap** | Deep service analysis, OS fingerprinting, NSE scripts | All phases |
 | **execute_nuclei** | Vulnerability scanning with 9,000+ templates | All phases |
+| **kali_shell** | Direct Kali Linux shell commands (arbitrary command execution) | All phases |
+| **execute_code** | Run custom Python/Bash exploit scripts on the Kali sandbox | Exploitation & Post-exploitation |
 | **metasploit_console** | Exploit execution, payload delivery, sessions | Exploitation & Post-exploitation |
+| **msf_restart** | Restart Metasploit RPC daemon when it becomes unresponsive | Exploitation & Post-exploitation |
 
 For long-running Metasploit operations (e.g., brute force with large wordlists), the agent streams progress updates every 5 seconds to the WebSocket, so you see output in real time.
+
+#### Kali Sandbox Tooling
+
+Beyond the MCP tools listed above, the `kali_shell` and `execute_code` tools give the agent access to the **full Kali Linux toolkit** installed in the sandbox container. The agent can invoke any of these directly via shell commands or compile and run custom exploit scripts on the fly.
+
+**Exploitation & Offensive**
+
+| Tool | Description |
+|------|-------------|
+| **Metasploit Framework** | Full exploitation framework — exploits, payloads, encoders, auxiliaries, Meterpreter sessions |
+| **SQLMap** | Automatic SQL injection detection and exploitation |
+| **ExploitDB** | Local copy of the Exploit Database — offline CVE exploit search |
+| **John the Ripper** | Password cracker — dictionary, brute force, and rule-based attacks |
+
+**Network & Reconnaissance**
+
+| Tool | Description |
+|------|-------------|
+| **Nmap** | Network mapper — port scanning, service detection, OS fingerprinting, NSE scripts |
+| **Naabu** | Fast SYN/CONNECT port scanner from ProjectDiscovery |
+| **Nuclei** | Template-based vulnerability scanner with 9,000+ community templates |
+| **curl** | HTTP/HTTPS client — API probing, header inspection, file upload/download |
+| **wget** | File download utility |
+| **Netcat (nc)** | Swiss-army knife for TCP/UDP — reverse shells, port listeners, data transfer |
+| **Socat** | Advanced socket relay — bidirectional data streams, port forwarding, SSL tunnels |
+| **dig / nslookup / host** | DNS reconnaissance — record lookups, zone transfers, reverse DNS |
+| **SMBClient** | SMB/CIFS protocol client — share enumeration, file access, authentication testing |
+
+**Programming & Scripting**
+
+| Tool | Description |
+|------|-------------|
+| **Python 3** | Full Python interpreter — write and run custom exploit scripts, parsers, automation |
+| **Perl** | Perl interpreter — legacy exploit scripts and text processing |
+| **GCC / G++** | C/C++ compilers — compile custom exploits, shellcode, and binary tools on-the-fly |
+| **Make** | Build automation for multi-file exploit projects |
+| **Go 1.25** | Go compiler — build Go-based security tools from source |
+| **Git** | Clone exploit repositories and security tools at runtime |
+
+**Utilities**
+
+| Tool | Description |
+|------|-------------|
+| **jq** | JSON processor — parse API responses, filter scan results |
+| **rlwrap** | Readline wrapper — enhanced interactive shell sessions |
+| **net-tools** | Network utilities — `netstat`, `ifconfig`, routing tables |
+| **iputils-ping** | ICMP ping for host discovery |
+
+> **Note:** The container runs with `NET_ADMIN`, `NET_RAW`, and `SYS_PTRACE` capabilities, enabling raw socket operations (SYN scanning), packet capture, and process debugging. The agent can also compile and execute C/C++ exploits in-place using `execute_code`.
 
 #### Attack Path Routing
 
@@ -402,6 +472,48 @@ The architecture supports **10 attack path categories** (CVE exploitation, brute
 | 2 | **Brute Force / Credential Guess** | Password guessing attacks against authentication services (SSH, FTP, MySQL, SMB, HTTP, and more). The agent selects the appropriate `auxiliary/scanner/*/login` module, configures wordlists from Metasploit's built-in collection, and runs the attack. When SSH brute force succeeds with `CreateSession: true`, the agent transitions to a shell-based post-exploitation phase. | `auxiliary/scanner/*` | Sometimes (SSH) |
 
 For full details on all 10 attack path categories, the intent router architecture, chain-specific workflows, and the implementation roadmap, see the **[Attack Paths Documentation](agentic/README.ATTACK_PATHS.md)**.
+
+---
+
+### AI Model Providers
+
+RedAmon supports **four AI providers** out of the box, giving you access to **400+ language models** through a single, unified interface. The model selector in the project settings **dynamically fetches** available models from each provider whose API key is configured — no hardcoded lists, no manual updates. When a provider releases a new model, it appears automatically.
+
+| Provider | Models | Pricing | API Key Required |
+|----------|--------|---------|-----------------|
+| **OpenAI** (Direct) | ~30 chat models — GPT-5.2, GPT-5, GPT-4.1, o3, o4-mini, and more | Pay-per-token via OpenAI | `OPENAI_API_KEY` |
+| **Anthropic** (Direct) | ~15 models — Claude Opus 4.6, Sonnet 4.6/4.5, Haiku 4.5 | Pay-per-token via Anthropic | `ANTHROPIC_API_KEY` |
+| **OpenRouter** | **300+ models** — Llama 4, Gemini 3, Mistral, Qwen, DeepSeek, Command R+, and hundreds more from 50+ providers routed through a single API | Variable per model (some free) | `OPENROUTER_API_KEY` |
+| **AWS Bedrock** | ~60 foundation models — Claude, Titan, Llama, Cohere Command, Mistral, AI21 Jamba, and more | Pay-per-token via AWS | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` |
+
+#### How It Works
+
+1. **API key detection** — On startup, the agent checks which provider API keys are set in the environment. Only providers with valid keys are queried.
+2. **Dynamic model fetching** — The agent's `/models` endpoint fetches available models from all configured providers in parallel (OpenAI API, Anthropic API, OpenRouter API, AWS Bedrock `ListFoundationModels`). Results are cached for 1 hour.
+3. **Searchable model selector** — The project settings UI presents a searchable dropdown grouped by provider. Each model shows its name, context window size, and pricing info. Type to filter across all providers instantly.
+4. **Provider prefix convention** — Models are stored with a provider prefix (`openrouter/`, `bedrock/`) so the agent knows which SDK to use at runtime. OpenAI and Anthropic models are detected by name pattern (no prefix needed). Existing projects continue to work unchanged.
+
+#### Provider Setup
+
+```env
+# .env — add the keys for the providers you want to use
+
+# Direct providers (lowest latency, direct API connection)
+OPENAI_API_KEY=sk-proj-...          # OpenAI — platform.openai.com/api-keys
+ANTHROPIC_API_KEY=sk-ant-...        # Anthropic — console.anthropic.com
+
+# Gateway providers (access many models through one key)
+OPENROUTER_API_KEY=sk-or-...        # OpenRouter — openrouter.ai/settings/keys
+
+# AWS Bedrock (uses standard AWS credential chain)
+AWS_ACCESS_KEY_ID=AKIA...           # IAM user with bedrock:InvokeModel permission
+AWS_SECRET_ACCESS_KEY=...           # IAM secret key
+AWS_DEFAULT_REGION=us-east-1        # Recommended: us-east-1 (N. Virginia) has the widest model availability
+```
+
+> **Note (Bedrock):** Foundation models on AWS Bedrock are now **automatically enabled** across all commercial regions when first invoked — no manual model access activation is required. Just create an IAM user with `bedrock:InvokeModel` and `bedrock:ListFoundationModels` permissions, set the credentials above, and start using any model immediately.
+
+> **Tip:** You can configure multiple providers simultaneously. The model selector will show all available models from all configured providers, letting you switch between a free Llama model on OpenRouter for testing and Claude Opus on Anthropic for production assessments — without changing any code.
 
 ---
 
@@ -784,7 +896,7 @@ Configure the AI agent orchestrator that performs autonomous pentesting. Control
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| LLM Model | gpt-5.2 | The language model powering the agent. Supports Anthropic (Claude Opus 4.6, Sonnet 4.5, Haiku 4.5) and OpenAI (GPT-5.2, GPT-5, GPT-4.1 families). Anthropic models require ANTHROPIC_API_KEY |
+| LLM Model | claude-opus-4-6 | The language model powering the agent. Supports four providers: **OpenAI** (GPT-5.2, GPT-5, GPT-4.1), **Anthropic** (Claude Opus 4.6, Sonnet 4.5, Haiku 4.5), **OpenRouter** (300+ models — Llama, Gemini, Mistral, etc.), and **AWS Bedrock** (Claude, Titan, Llama, etc.). Models are **dynamically fetched** from each provider whose API key is configured — the dropdown updates automatically. Each provider requires its own API key in `.env` |
 | Post-Exploitation Type | statefull | `statefull` — keeps Meterpreter sessions between turns. `stateless` — executes one-shot commands |
 | Activate Post-Exploitation Phase | true | Whether post-exploitation is available at all. When disabled, the agent stops after exploitation |
 | Informational Phase System Prompt | — | Custom instructions injected during the informational/recon phase. Leave empty for default |
@@ -847,6 +959,8 @@ A matrix that controls which tools the agent can use in each operational phase. 
 | execute_naabu | ✓ | ✓ | ✓ |
 | execute_nmap | ✓ | ✓ | ✓ |
 | execute_nuclei | ✓ | ✓ | ✓ |
+| kali_shell | ✓ | ✓ | ✓ |
+| execute_code | — | ✓ | ✓ |
 | metasploit_console | — | ✓ | ✓ |
 | msf_restart | — | ✓ | ✓ |
 
@@ -1464,10 +1578,13 @@ These containers are designed to be deployed alongside the main stack so the AI 
 |-----------|------|
 | **LangChain** | LLM application framework — prompt management, tool binding, chain composition |
 | **LangGraph** | State machine engine implementing the ReAct (Reasoning + Acting) agent loop |
-| **Claude** (Anthropic) | Supported LLM family — Opus 4.6, Sonnet 4.5, Haiku 4.5 |
-| **GPT** (OpenAI) | Supported LLM family — GPT-5.2, GPT-5, GPT-4.1 |
+| **OpenAI** (Direct) | Supported LLM family — GPT-5.2, GPT-5, GPT-4.1. Requires `OPENAI_API_KEY` |
+| **Anthropic** (Direct) | Supported LLM family — Claude Opus 4.6, Sonnet 4.5, Haiku 4.5. Requires `ANTHROPIC_API_KEY` |
+| **OpenRouter** | Multi-model gateway — access 300+ models (Llama 4, Gemini 3, Mistral, Qwen, etc.) through a single API key. Uses OpenAI-compatible endpoint. Requires `OPENROUTER_API_KEY` |
+| **AWS Bedrock** | Managed AWS service — access foundation models (Claude, Titan, Llama, Cohere, etc.) via `langchain-aws`. Requires `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` |
 | **Tavily** | AI-powered web search used by the agent for CVE research and exploit intelligence |
 | **Model Context Protocol (MCP)** | Standardized protocol for tool integration — the agent calls security tools through MCP servers |
+| **LangChain AWS** | AWS Bedrock integration — `ChatBedrockConverse` for Bedrock foundation models |
 | **LangChain MCP Adapters** | Bridges LangChain tool interface with MCP server endpoints |
 | **Text-to-Cypher** | LLM-powered natural language to Neo4j Cypher query translation |
 

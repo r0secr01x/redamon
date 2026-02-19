@@ -27,10 +27,11 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # Import settings from project_settings (fetches from API or falls back to params.py)
-from recon.project_settings import get_settings
+from recon.project_settings import get_settings, apply_stealth_overrides
 
 # Load settings from API (if PROJECT_ID/WEBAPP_API_URL set) or params.py (CLI mode)
 _settings = get_settings()
+_settings = apply_stealth_overrides(_settings)
 
 # Extract commonly used settings as module-level variables for compatibility
 TARGET_DOMAIN = _settings['TARGET_DOMAIN']

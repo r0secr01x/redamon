@@ -14,7 +14,7 @@ export function GlobalHeader() {
         <span className={styles.logoText}>
           <span className={styles.logoAccent}>Red</span>Amon
         </span>
-        <span className={styles.version}>v1.2.0</span>
+        <span className={styles.version}>v1.3.0</span>
       </div>
 
       <div className={styles.spacer} />

@@ -278,7 +278,8 @@ User Question: {question}
 Cypher Query:"""
 
         response = await self.llm.ainvoke(prompt)
-        cypher = response.content.strip()
+        from orchestrator_helpers.json_utils import normalize_content
+        cypher = normalize_content(response.content).strip()
 
         # Clean up the response - remove markdown code blocks if present
         if cypher.startswith("```"):

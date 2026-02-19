@@ -49,6 +49,9 @@ from .post_exploitation import (
     POST_EXPLOITATION_TOOLS_STATELESS,
 )
 
+# Re-export from stealth rules
+from .stealth_rules import STEALTH_MODE_RULES
+
 # Import utilities
 from utils import get_session_config_prompt
 from project_settings import get_setting, get_allowed_tools_for_phase
@@ -97,6 +100,14 @@ def get_phase_tools(
     """
     parts = []
     is_statefull = post_expl_type == "statefull"
+
+    # Stealth mode header — reminds LLM that stealth constraints apply to all tools below
+    if get_setting('STEALTH_MODE', False):
+        parts.append(
+            "## STEALTH MODE ACTIVE\n\n"
+            "All tools below MUST be used with stealth constraints. "
+            "See STEALTH MODE rules above for per-tool restrictions.\n"
+        )
 
     # Add phase-specific custom system prompt if configured
     informational_prompt = get_setting('INFORMATIONAL_SYSTEM_PROMPT', '')
@@ -220,6 +231,8 @@ __all__ = [
     # Post-exploitation
     "POST_EXPLOITATION_TOOLS_STATEFULL",
     "POST_EXPLOITATION_TOOLS_STATELESS",
+    # Stealth rules
+    "STEALTH_MODE_RULES",
     # Function
     "get_phase_tools",
 ]

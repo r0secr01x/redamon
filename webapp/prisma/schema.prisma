@@ -33,6 +33,7 @@ model Project {
   verifyDomainOwnership       Boolean  @default(false) @map("verify_domain_ownership")
   ownershipToken              String   @default("your-secret-token-here") @map("ownership_token")
   ownershipTxtPrefix          String   @default("_redamon-verify") @map("ownership_txt_prefix")
+  stealthMode                 Boolean  @default(false) @map("stealth_mode")
 
   // ========== SCAN MODULES ==========
   scanModules                 String[] @default(["domain_discovery", "port_scan", "http_probe", "resource_enum", "vuln_scan"]) @map("scan_modules")
@@ -250,7 +251,7 @@ model Project {
   gvmCleanupAfterScan               Boolean @default(true) @map("gvm_cleanup_after_scan")
 
   // ========== AGENT BEHAVIOUR ==========
-  agentOpenaiModel                      String   @default("gpt-5.2") @map("agent_openai_model")
+  agentOpenaiModel                      String   @default("claude-opus-4-6") @map("agent_openai_model")
   agentInformationalSystemPrompt        String   @default("") @map("agent_informational_system_prompt")
   agentExplSystemPrompt                 String   @default("") @map("agent_expl_system_prompt")
   agentPostExplSystemPrompt             String   @default("") @map("agent_post_expl_system_prompt")

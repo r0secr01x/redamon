@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { ChevronDown, Bot } from 'lucide-react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { ChevronDown, Bot, Search, Loader2 } from 'lucide-react'
 import { Toggle } from '@/components/ui'
 import type { Project } from '@prisma/client'
 import styles from '../ProjectForm.module.css'
@@ -13,8 +13,89 @@ interface AgentBehaviourSectionProps {
   updateField: <K extends keyof FormData>(field: K, value: FormData[K]) => void
 }
 
+interface ModelOption {
+  id: string
+  name: string
+  context_length: number | null
+  description: string
+}
+
+function formatContextLength(ctx: number | null): string {
+  if (!ctx) return ''
+  if (ctx >= 1_000_000) return `${(ctx / 1_000_000).toFixed(1)}M`
+  if (ctx >= 1_000) return `${Math.round(ctx / 1_000)}K`
+  return String(ctx)
+}
+
+function getDisplayName(modelId: string, allModels: Record<string, ModelOption[]>): string {
+  for (const models of Object.values(allModels)) {
+    const found = models.find(m => m.id === modelId)
+    if (found) return found.name
+  }
+  return modelId
+}
+
 export function AgentBehaviourSection({ data, updateField }: AgentBehaviourSectionProps) {
   const [isOpen, setIsOpen] = useState(true)
+
+  // Model selector state
+  const [allModels, setAllModels] = useState<Record<string, ModelOption[]>>({})
+  const [modelsLoading, setModelsLoading] = useState(true)
+  const [modelsError, setModelsError] = useState(false)
+  const [search, setSearch] = useState('')
+  const [dropdownOpen, setDropdownOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Fetch models on mount
+  useEffect(() => {
+    fetch('/api/models')
+      .then(r => {
+        if (!r.ok) throw new Error('Failed to fetch')
+        return r.json()
+      })
+      .then(data => {
+        if (data && typeof data === 'object' && !data.error) {
+          setAllModels(data)
+        } else {
+          setModelsError(true)
+        }
+      })
+      .catch(() => setModelsError(true))
+      .finally(() => setModelsLoading(false))
+  }, [])
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false)
+        setSearch('')
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const selectModel = useCallback((id: string) => {
+    updateField('agentOpenaiModel', id)
+    setDropdownOpen(false)
+    setSearch('')
+  }, [updateField])
+
+  // Filter models by search
+  const filteredModels: Record<string, ModelOption[]> = {}
+  const lowerSearch = search.toLowerCase()
+  for (const [provider, models] of Object.entries(allModels)) {
+    const filtered = models.filter(m =>
+      m.id.toLowerCase().includes(lowerSearch) ||
+      m.name.toLowerCase().includes(lowerSearch) ||
+      m.description.toLowerCase().includes(lowerSearch)
+    )
+    if (filtered.length > 0) filteredModels[provider] = filtered
+  }
+
+  const totalFiltered = Object.values(filteredModels).reduce((sum, arr) => sum + arr.length, 0)
 
   return (
     <div className={styles.section}>
@@ -41,32 +122,89 @@ export function AgentBehaviourSection({ data, updateField }: AgentBehaviourSecti
             <div className={styles.fieldRow}>
               <div className={styles.fieldGroup}>
                 <label className={styles.fieldLabel}>LLM Model</label>
-                <select
-                  className="select"
-                  value={data.agentOpenaiModel}
-                  onChange={(e) => updateField('agentOpenaiModel', e.target.value)}
-                >
-                  <optgroup label="Anthropic Claude">
-                    <option value="claude-opus-4-6">Claude Opus 4.6 — Most capable model</option>
-                    <option value="claude-sonnet-4-5-20250929">Claude Sonnet 4.5 — Balanced performance</option>
-                    <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 — Fast and efficient</option>
-                  </optgroup>
-                  <optgroup label="GPT-5.2">
-                    <option value="gpt-5.2">gpt-5.2 — Flagship reasoning model</option>
-                    <option value="gpt-5.2-pro">gpt-5.2-pro — Smarter, more precise (Responses API)</option>
-                  </optgroup>
-                  <optgroup label="GPT-5">
-                    <option value="gpt-5">gpt-5 — Previous reasoning model</option>
-                    <option value="gpt-5-mini">gpt-5-mini — Faster, cost-efficient GPT-5</option>
-                    <option value="gpt-5-nano">gpt-5-nano — Fastest, cheapest GPT-5</option>
-                  </optgroup>
-                  <optgroup label="GPT-4.1">
-                    <option value="gpt-4.1">gpt-4.1 — Smartest non-reasoning model</option>
-                    <option value="gpt-4.1-mini">gpt-4.1-mini — Fast, cost-efficient</option>
-                    <option value="gpt-4.1-nano">gpt-4.1-nano — Fastest, cheapest</option>
-                  </optgroup>
-                </select>
-                <span className={styles.fieldHint}>Model used by the agent. Anthropic models require ANTHROPIC_API_KEY in the agent .env file.</span>
+                <div className={styles.modelSelector} ref={dropdownRef}>
+                  <div
+                    className={`${styles.modelSelectorInput} ${dropdownOpen ? styles.modelSelectorInputFocused : ''}`}
+                    onClick={() => {
+                      setDropdownOpen(true)
+                      setTimeout(() => inputRef.current?.focus(), 0)
+                    }}
+                  >
+                    {dropdownOpen ? (
+                      <input
+                        ref={inputRef}
+                        className={styles.modelSearchInput}
+                        type="text"
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        placeholder="Search models..."
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') {
+                            setDropdownOpen(false)
+                            setSearch('')
+                          }
+                        }}
+                      />
+                    ) : (
+                      <span className={styles.modelSelectedText}>
+                        {modelsLoading ? 'Loading models...' : getDisplayName(data.agentOpenaiModel, allModels)}
+                      </span>
+                    )}
+                    {modelsLoading ? (
+                      <Loader2 size={12} className={styles.modelSelectorSpinner} />
+                    ) : (
+                      <Search size={12} className={styles.modelSelectorIcon} />
+                    )}
+                  </div>
+
+                  {dropdownOpen && (
+                    <div className={styles.modelDropdown}>
+                      {modelsError ? (
+                        <div className={styles.modelDropdownEmpty}>
+                          <span>Failed to load models. Type a model ID manually:</span>
+                          <input
+                            className="textInput"
+                            type="text"
+                            value={data.agentOpenaiModel}
+                            onChange={(e) => updateField('agentOpenaiModel', e.target.value)}
+                            placeholder="e.g. claude-opus-4-6, gpt-5.2, openrouter/meta-llama/llama-4-maverick"
+                            style={{ marginTop: 'var(--space-1)' }}
+                          />
+                        </div>
+                      ) : Object.keys(filteredModels).length === 0 ? (
+                        <div className={styles.modelDropdownEmpty}>
+                          {search ? `No models matching "${search}"` : 'No providers configured'}
+                        </div>
+                      ) : (
+                        Object.entries(filteredModels).map(([provider, models]) => (
+                          <div key={provider} className={styles.modelGroup}>
+                            <div className={styles.modelGroupHeader}>{provider}</div>
+                            {models.map(model => (
+                              <div
+                                key={model.id}
+                                className={`${styles.modelOption} ${model.id === data.agentOpenaiModel ? styles.modelOptionSelected : ''}`}
+                                onClick={() => selectModel(model.id)}
+                              >
+                                <div className={styles.modelOptionMain}>
+                                  <span className={styles.modelOptionName}>{model.name}</span>
+                                  {model.context_length && (
+                                    <span className={styles.modelOptionCtx}>{formatContextLength(model.context_length)}</span>
+                                  )}
+                                </div>
+                                {model.description && (
+                                  <span className={styles.modelOptionDesc}>{model.description}</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+                <span className={styles.fieldHint}>
+                  Model used by the agent. Each provider requires its own API key in the .env file.
+                </span>
               </div>
             </div>
             <div className={styles.toggleRow}>
@@ -328,7 +466,7 @@ export function AgentBehaviourSection({ data, updateField }: AgentBehaviourSecti
               ].map(tool => {
                 const phaseMap = (typeof data.agentToolPhaseMap === 'string'
                   ? JSON.parse(data.agentToolPhaseMap)
-                  : data.agentToolPhaseMap) as Record<string, string[]>
+                  : data.agentToolPhaseMap ?? {}) as Record<string, string[]>
                 const toolPhases = phaseMap[tool.id] || []
 
                 const togglePhase = (phase: string) => {

@@ -362,6 +362,8 @@ export default function GraphPage() {
         githubHuntStatus={githubHuntState?.status || 'idle'}
         hasGithubHuntData={hasGithubHuntData}
         isGithubHuntLogsOpen={activeLogsDrawer === 'githubHunt'}
+        // Stealth mode
+        stealthMode={currentProject?.stealthMode}
       />
 
       <div ref={bodyRef} className={styles.body}>
@@ -435,6 +437,7 @@ export default function GraphPage() {
         onResetSession={resetSession}
         modelName={currentProject?.agentOpenaiModel}
         toolPhaseMap={currentProject?.agentToolPhaseMap}
+        stealthMode={currentProject?.stealthMode}
       />
 
       <ReconConfirmModal

@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { Sparkles, Play, Download, Loader2, Terminal, Settings, Shield, Github } from 'lucide-react'
+import { Sparkles, Play, Download, Loader2, Terminal, Settings, Shield, Github, EyeOff } from 'lucide-react'
 import { Toggle } from '@/components/ui'
 import type { ReconStatus, GvmStatus, GithubHuntStatus } from '@/lib/recon-types'
 import styles from './GraphToolbar.module.css'
@@ -38,6 +38,8 @@ interface GraphToolbarProps {
   githubHuntStatus?: GithubHuntStatus
   hasGithubHuntData?: boolean
   isGithubHuntLogsOpen?: boolean
+  // Stealth mode
+  stealthMode?: boolean
 }
 
 export function GraphToolbar({
@@ -72,6 +74,8 @@ export function GraphToolbar({
   githubHuntStatus = 'idle',
   hasGithubHuntData = false,
   isGithubHuntLogsOpen = false,
+  // Stealth mode
+  stealthMode = false,
 }: GraphToolbarProps) {
   const router = useRouter()
   const isReconRunning = reconStatus === 'running' || reconStatus === 'starting'
@@ -129,6 +133,16 @@ export function GraphToolbar({
         </>
       )}
 
+      {stealthMode && (
+        <>
+          <div className={styles.divider} />
+          <div className={styles.stealthBadge} title="Stealth Mode is active — passive/low-noise techniques only">
+            <EyeOff size={12} />
+            <span>Stealth</span>
+          </div>
+        </>
+      )}
+
       <div className={styles.spacer} />
 
       {/* Recon Actions */}
@@ -173,9 +187,11 @@ export function GraphToolbar({
           <button
             className={`${styles.gvmButton} ${isGvmRunning ? styles.gvmButtonActive : ''}`}
             onClick={onStartGvm}
-            disabled={isGvmRunning || !hasReconData}
+            disabled={isGvmRunning || !hasReconData || stealthMode}
             title={
-              !hasReconData
+              stealthMode
+                ? 'GVM scanning is disabled in Stealth Mode (generates ~50,000 active probes per target)'
+                : !hasReconData
                 ? 'Run recon first'
                 : isGvmRunning
                 ? 'GVM scan in progress...'

@@ -8,6 +8,7 @@ Endpoints:
     WS /ws/agent - WebSocket endpoint for real-time bidirectional streaming
     GET /health - Health check
     GET /defaults - Agent default settings (camelCase, for frontend)
+    GET /models - Available AI models from all configured providers
 """
 
 import logging
@@ -130,12 +131,31 @@ async def get_defaults():
         components = prefixed.lower().split('_')
         return components[0] + ''.join(x.title() for x in components[1:])
 
+    # STEALTH_MODE is a project-level setting (not agent-specific), served by
+    # recon defaults as "stealthMode".  Exclude it here to avoid creating a
+    # duplicate "agentStealthMode" key that Prisma doesn't recognise.
+    SKIP_KEYS = {'STEALTH_MODE'}
+
     camel_case_defaults = {
         to_camel_case(k): v
         for k, v in DEFAULT_AGENT_SETTINGS.items()
+        if k not in SKIP_KEYS
     }
 
     return camel_case_defaults
+
+
+@app.get("/models", tags=["System"])
+async def get_models():
+    """
+    Fetch available AI models from all configured providers.
+
+    Returns a dict keyed by provider name, each containing a list of models
+    with {id, name, context_length, description}. Results are cached for 1 hour.
+    Only providers with valid API keys in the environment are queried.
+    """
+    from model_providers import fetch_all_models
+    return await fetch_all_models()
 
 
 @app.websocket("/ws/agent")

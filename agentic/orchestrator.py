@@ -64,6 +64,7 @@ from prompts import (
 )
 from orchestrator_helpers import (
     json_dumps_safe,
+    normalize_content,
     extract_json,
     parse_llm_decision,
     try_parse_llm_decision,
@@ -100,6 +101,10 @@ class AgentOrchestrator:
         """Initialize the orchestrator with configuration."""
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+        self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+        self.aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
+        self.aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+        self.aws_region = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
         self.neo4j_uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
         self.neo4j_user = os.getenv("NEO4J_USER", "neo4j")
         self.neo4j_password = os.getenv("NEO4J_PASSWORD")
@@ -178,7 +183,7 @@ class AgentOrchestrator:
     def _apply_project_settings(self, project_id: str) -> None:
         """Load project settings from webapp API and reconfigure LLM if model changed."""
         settings = load_project_settings(project_id)
-        new_model = settings.get('OPENAI_MODEL', 'gpt-5.2')
+        new_model = settings.get('OPENAI_MODEL', 'claude-opus-4-6')
 
         if new_model != self.model_name:
             logger.info(f"Model changed: {self.model_name} -> {new_model}")
@@ -189,33 +194,85 @@ class AgentOrchestrator:
                 self.neo4j_manager.llm = self.llm
                 logger.info("Updated Neo4j tool LLM")
 
+    @staticmethod
+    def _parse_model_provider(model_name: str) -> tuple[str, str]:
+        """
+        Parse provider and API model name from the stored model identifier.
+
+        Prefix convention:
+          - "openrouter/<model>"  → ("openrouter", "<model>")
+          - "bedrock/<model>"     → ("bedrock", "<model>")
+          - "claude-*"            → ("anthropic", "claude-*")
+          - anything else         → ("openai", "<model>")
+        """
+        if model_name.startswith("openrouter/"):
+            return ("openrouter", model_name[len("openrouter/"):])
+        elif model_name.startswith("bedrock/"):
+            return ("bedrock", model_name[len("bedrock/"):])
+        elif model_name.startswith("claude-"):
+            return ("anthropic", model_name)
+        else:
+            return ("openai", model_name)
+
     def _setup_llm(self) -> None:
-        """Initialize the LLM based on model name (OpenAI or Anthropic)."""
+        """Initialize the LLM based on model name (detect provider from prefix)."""
         logger.info(f"Setting up LLM: {self.model_name}")
 
-        if self.model_name.startswith("claude-"):
+        provider, api_model = self._parse_model_provider(self.model_name)
+
+        if provider == "openrouter":
+            if not self.openrouter_api_key:
+                raise ValueError(
+                    f"OPENROUTER_API_KEY environment variable is required for model '{self.model_name}'"
+                )
+            self.llm = ChatOpenAI(
+                model=api_model,
+                api_key=self.openrouter_api_key,
+                base_url="https://openrouter.ai/api/v1",
+                temperature=0,
+                default_headers={
+                    "HTTP-Referer": "https://redamon.dev",
+                    "X-Title": "RedAmon Agent",
+                },
+            )
+
+        elif provider == "bedrock":
+            if not self.aws_access_key_id or not self.aws_secret_access_key:
+                raise ValueError(
+                    f"AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are required for model '{self.model_name}'"
+                )
+            from langchain_aws import ChatBedrockConverse
+            self.llm = ChatBedrockConverse(
+                model=api_model,
+                region_name=self.aws_region,
+                temperature=0,
+                max_tokens=4096,
+            )
+
+        elif provider == "anthropic":
             if not self.anthropic_api_key:
                 raise ValueError(
                     f"ANTHROPIC_API_KEY environment variable is required for model '{self.model_name}'"
                 )
             self.llm = ChatAnthropic(
-                model=self.model_name,
+                model=api_model,
                 api_key=self.anthropic_api_key,
                 temperature=0,
                 max_tokens=4096,
             )
-        else:
+
+        else:  # openai
             if not self.openai_api_key:
                 raise ValueError(
                     f"OPENAI_API_KEY environment variable is required for model '{self.model_name}'"
                 )
             self.llm = ChatOpenAI(
-                model=self.model_name,
+                model=api_model,
                 api_key=self.openai_api_key,
                 temperature=0,
             )
 
-        logger.info(f"LLM provider: {'Anthropic' if self.model_name.startswith('claude-') else 'OpenAI'}")
+        logger.info(f"LLM provider: {provider}, model: {api_model}")
 
     async def _setup_tools(self) -> None:
         """Set up all tools (MCP and Neo4j)."""
@@ -559,6 +616,12 @@ class AgentOrchestrator:
             qa_history=qa_history_formatted,
         )
 
+        # Inject stealth mode rules if enabled (prepended for maximum priority)
+        if get_setting('STEALTH_MODE', False):
+            from prompts.stealth_rules import STEALTH_MODE_RULES
+            system_prompt = STEALTH_MODE_RULES + "\n\n" + system_prompt
+            logger.info(f"[{user_id}/{project_id}/{session_id}] STEALTH MODE active — injected stealth rules into prompt")
+
         # Failure loop detection: if 3+ consecutive similar failures, inject warning
         exec_trace = state.get("execution_trace", [])
         if len(exec_trace) >= 3:
@@ -670,7 +733,7 @@ class AgentOrchestrator:
                 ))
 
             response = await self.llm.ainvoke(messages)
-            response_text = response.content.strip()
+            response_text = normalize_content(response.content).strip()
 
             # Log the raw LLM response
             logger.info(f"\n{'='*60}")
@@ -1339,7 +1402,7 @@ class AgentOrchestrator:
         response = await self.llm.ainvoke([HumanMessage(content=report_prompt)])
 
         return {
-            "messages": [AIMessage(content=response.content)],
+            "messages": [AIMessage(content=normalize_content(response.content))],
             "task_complete": True,
             "completion_reason": state.get("completion_reason") or "Task completed successfully",
             "_report_generated": True,

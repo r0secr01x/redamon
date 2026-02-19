@@ -7,6 +7,7 @@ to keep the architectural flow clear and maintainable.
 from .json_utils import (
     DateTimeEncoder,
     json_dumps_safe,
+    normalize_content,
     extract_json,
 )
 
@@ -44,6 +45,7 @@ __all__ = [
     # json_utils
     "DateTimeEncoder",
     "json_dumps_safe",
+    "normalize_content",
     "extract_json",
     # parsing
     "parse_llm_decision",
