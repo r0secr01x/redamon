@@ -89,9 +89,9 @@ export function GraphCanvas3D({
       linkColor={(link) => getLinkColor(link as GraphLink, selectedNodeId)}
       linkWidth={(link) => getLinkWidth3D(link as GraphLink, selectedNodeId)}
       linkDirectionalParticles={(link) => getParticleCount(link as GraphLink, selectedNodeId)}
-      linkDirectionalParticleWidth={(link: GraphLink) => getParticleWidth(link as GraphLink, selectedNodeId)}
-      linkDirectionalParticleColor={(link: GraphLink) => getParticleColor(link as GraphLink)}
-      linkDirectionalParticleSpeed={(link: GraphLink) => getParticleSpeed(link as GraphLink)}
+      linkDirectionalParticleWidth={(link) => getParticleWidth(link as GraphLink, selectedNodeId)}
+      linkDirectionalParticleColor={(link) => getParticleColor(link as GraphLink)}
+      linkDirectionalParticleSpeed={(link) => getParticleSpeed(link as GraphLink)}
       linkDirectionalArrowLength={LINK_SIZES.arrowLength3D}
       linkDirectionalArrowRelPos={1}
       backgroundColor={isDark ? BACKGROUND_COLORS.dark.graph : BACKGROUND_COLORS.light.graph}
