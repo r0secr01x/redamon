@@ -482,7 +482,7 @@ export function AIAssistantDrawer({
         const errorMsg: Message = {
           id: `error-${Date.now()}`,
           role: 'assistant',
-          content: `Failed to connect to agent. Please check that the backend is running at ${process.env.NEXT_PUBLIC_AGENT_WS_URL || 'ws://localhost:8090/ws/agent'}`,
+          content: `Failed to connect to agent. Please check that the backend is running at ws://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:8090/ws/agent`,
           error: error.message,
           timestamp: new Date(),
         }
