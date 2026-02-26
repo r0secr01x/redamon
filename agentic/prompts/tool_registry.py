@@ -153,8 +153,19 @@ TOOL_REGISTRY = {
             '   - **Supported languages:** python (default), bash, ruby, perl, c, cpp\n'
             '   - **Timeout:** 120s execution. Compiled languages: 60s compile + 120s run.\n'
             '   - **Files persist** at /tmp/{filename}.{ext} — re-runnable via kali_shell if needed.\n'
+            '   - **Pre-installed Python libraries** (import directly, no pip needed):\n'
+            '     - **requests** — HTTP requests for web exploitation, API interaction, form submission\n'
+            '     - **beautifulsoup4** (`from bs4 import BeautifulSoup`) — Parse HTML responses to extract tokens, forms, hidden fields, data\n'
+            '     - **pycryptodome** (`from Crypto.Cipher import AES`, etc.) — Encrypt/decrypt payloads, hash manipulation, custom crypto attacks\n'
+            '     - **PyJWT** (`import jwt`) — Forge/tamper/decode JWT tokens, algorithm confusion attacks (none/HS256/RS256)\n'
+            '     - **paramiko** — Programmatic SSH sessions, SFTP file transfer, SSH tunneling for post-exploitation\n'
+            '     - **impacket** — Windows/AD attacks: SMB relay, NTLM auth, Kerberos, secretsdump, psexec, wmiexec, dcomexec\n'
+            '     - **pwntools** (`from pwn import *`) — Binary exploitation, remote TCP connections, shellcode generation, struct packing, ROP chains\n'
             '   - Example: code="import requests\\nr=requests.post(\'http://target/rce\', data={\'cmd\': \'id\'})\\nprint(r.text)"\n'
-            '   - Example: code="import pickle,base64,os\\nclass E:\\n  def __reduce__(self):\\n    return(os.system,(\'id\',))\\nprint(base64.b64encode(pickle.dumps(E())).decode())"'
+            '   - Example: code="import requests\\nfrom bs4 import BeautifulSoup\\nr=requests.get(\'http://target/login\')\\nsoup=BeautifulSoup(r.text,\'html.parser\')\\ntoken=soup.find(\'input\',{\'name\':\'csrf\'})\\nprint(token[\'value\'])"\n'
+            '   - Example: code="import jwt\\ntoken=jwt.encode({\'user\':\'admin\',\'role\':\'admin\'},\'secret\',algorithm=\'HS256\')\\nprint(token)"\n'
+            '   - Example: code="from impacket.smbconnection import SMBConnection\\nconn=SMBConnection(\'target\',\'target\')\\nconn.login(\'user\',\'pass\')\\nshares=conn.listShares()\\nfor s in shares:\\n  print(s[\'shi1_netname\'])"\n'
+            '   - Example: code="from pwn import *\\nr=remote(\'target\',1337)\\nr.sendline(b\'payload\')\\nprint(r.recvall().decode())"'
         ),
     },
     "execute_hydra": {

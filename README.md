@@ -89,7 +89,7 @@ Get your key from [Anthropic Console](https://console.anthropic.com/) or [OpenAI
 
 **Additional AI providers** (optional — add these to unlock more models):
 ```env
-OPENAI_COMPAT_BASE_URL=http://host.docker.internal:11434/v1  # OpenAI-compatible endpoint (e.g. Ollama on host)
+OPENAI_COMPAT_BASE_URL=http://host.docker.internal:11434/v1  # Ollama on the same machine (see below for remote servers)
 OPENAI_COMPAT_API_KEY=                                        # optional (fallback token "ollama" is used if empty)
 OPENROUTER_API_KEY=sk-or-...   # OpenRouter — access 300+ models (Llama, Gemini, Mistral, etc.) via openrouter.ai
 AWS_ACCESS_KEY_ID=AKIA...      # AWS Bedrock — access foundation models (Claude, Titan, Llama, etc.)
@@ -535,7 +535,7 @@ OPENAI_API_KEY=sk-proj-...          # OpenAI — platform.openai.com/api-keys
 ANTHROPIC_API_KEY=sk-ant-...        # Anthropic — console.anthropic.com
 
 # OpenAI-compatible providers (self-hosted or third-party)
-OPENAI_COMPAT_BASE_URL=http://host.docker.internal:11434/v1  # Example: Ollama running on your host
+OPENAI_COMPAT_BASE_URL=http://host.docker.internal:11434/v1  # Ollama on same machine (use IP for remote, e.g. http://192.168.1.50:11434/v1)
 OPENAI_COMPAT_API_KEY=                                        # Optional; fallback token "ollama" is used if empty
 
 # Gateway providers (access many models through one key)
@@ -557,12 +557,25 @@ Any backend that exposes the standard `/v1/chat/completions` and `/v1/models` en
 
 The agent container already includes `host.docker.internal` resolution, so local servers running on your host machine are reachable from Docker.
 
-> **Linux users:** Most local LLM servers (Ollama, vLLM, etc.) listen on `localhost` by default, which is **not reachable** from Docker containers. You need to bind the server to all interfaces (`0.0.0.0`). For Ollama installed via the official script:
+**Ollama on the same machine as RedAmon (local):**
+```env
+OPENAI_COMPAT_BASE_URL=http://host.docker.internal:11434/v1
+```
+
+**Ollama on a different machine (remote server):**
+```env
+OPENAI_COMPAT_BASE_URL=http://192.168.1.50:11434/v1   # replace with your Ollama server's IP or hostname
+```
+Use the IP address (or hostname) of the remote machine instead of `host.docker.internal`. Make sure port `11434` is reachable from the machine running RedAmon (no firewall blocking it).
+
+> **Important:** By default Ollama only listens on `localhost`, which rejects connections from other machines and from Docker containers. You must bind it to all interfaces (`0.0.0.0`) on the machine running Ollama:
 > ```bash
-> sudo bash -c 'mkdir -p /etc/systemd/system/ollama.service.d && echo -e "[Service]\nEnvironment=\"OLLAMA_HOST=0.0.0.0\"" > /etc/systemd/system/ollama.service.d/override.conf'
+> # If Ollama is managed by systemd (Linux):
+> sudo mkdir -p /etc/systemd/system/ollama.service.d
+> echo -e '[Service]\nEnvironment="OLLAMA_HOST=0.0.0.0"' | sudo tee /etc/systemd/system/ollama.service.d/override.conf
 > sudo systemctl daemon-reload && sudo systemctl restart ollama
 > ```
-> macOS and Windows (Docker Desktop) handle this automatically — no extra step needed.
+> This is required both for **remote** setups and for **local Linux** setups (Docker containers can't reach `localhost` on the host). macOS and Windows with Docker Desktop handle local resolution automatically, but still need `OLLAMA_HOST=0.0.0.0` if Ollama is accessed from a remote machine.
 
 **Self-hosted / local (free):**
 
